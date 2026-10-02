@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -33,11 +34,12 @@ class TestGeneResolverDownloadGenome:
         assert GeneResolver._SPECIES_ASSEMBLY["mouse"][1] == "GRCm39"
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="pysam not available on Windows")
 class TestGeneResolverLocalIndexedSequence:
     @pytest.fixture
     def resolver_with_genome(self, tmp_path):
         """Create a GeneResolver with a tiny mock genome FASTA."""
-        import pysam
+        pysam = pytest.importorskip("pysam", reason="pysam not available on this platform")
         from embpy.resources.gene_resolver import GeneResolver
 
         fa_path = tmp_path / "test_genome.fa"
@@ -127,7 +129,7 @@ class TestGeneResolverLocalFirstFallback:
         gr = GeneResolver.__new__(GeneResolver)
         gr.species = "human"
         gr._genome_fasta = MagicMock()
-        gr._genome_dir = Path("/tmp")
+        gr._genome_dir = Path(tempfile.gettempdir())
         gr.ensembl = MagicMock()
 
         with patch.object(gr, "_load_genome_if_available", return_value=True), \

@@ -38,7 +38,7 @@ dependencies = [
   # Intentionally permissive: scipy 1.13 (needed by helical) pre-dates numpy 2,
   # while modern torch / transformers work fine with numpy 2. Both are ok.
   "numpy>=1.26,<3",
-  "pysam>=0.22",
+  "pysam>=0.22; sys_platform != 'win32'",
   "pandas>=2.2",
   "pyarrow>=14.0.2",
   "pyensembl>=2.3.13",
@@ -50,6 +50,7 @@ dependencies = [
   "sentencepiece>=0.1.99",
   "protobuf>=3.20",
   "session-info",
+  "torch>=2.5.1",
   "torch-geometric>=2.5",
   "transformers>=4.45.0,<5.0.0",
 ]

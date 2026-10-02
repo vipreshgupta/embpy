@@ -4666,7 +4666,7 @@ class BioEmbedder:
             )
 
         # -- parse sequences --------------------------------------------
-        handle = gzip.open(filepath, "rt") if is_gz else open(filepath)
+        handle = gzip.open(filepath, "rt", encoding="utf-8") if is_gz else open(filepath, encoding="utf-8")  # noqa: WPS502
         try:
             records = list(SeqIO.parse(handle, fmt))
         finally:

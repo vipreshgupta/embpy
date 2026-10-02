@@ -33,7 +33,7 @@ authors = ["Goncalo Rei Pinto <goncalo.pinto@helmholtz-munich.de>"]
 channels = ["conda-forge", "bioconda", "pytorch", "nvidia"]
 # Only linux-64 gets the CUDA env (no NVIDIA on macOS / Apple Silicon).
 # Apple Silicon uses PyTorch's MPS backend through the conda-forge build.
-platforms = ["linux-64", "osx-arm64"]
+platforms = ["linux-64", "osx-arm64", "osx-64", "win-64"]
 
 # Activation env vars that apply to every `pixi run` / `pixi shell` call.
 # Setting PYTHONNOUSERSITE=1 stops Python from picking up stale packages in
@@ -42,6 +42,8 @@ platforms = ["linux-64", "osx-arm64"]
 # cause `_ARRAY_API not found` / `CXXABI_1.3.15 not found` errors.
 [activation.env]
 PYTHONNOUSERSITE = "1"
+PYTHONUTF8 = "1"
+PYTORCH_ENABLE_MPS_FALLBACK = "1"
 
 # ---------------------------------------------------------------------------
 # Core dependencies -- these are available everywhere (CPU and GPU).
@@ -67,8 +69,6 @@ anndata = "*"
 # Bioinformatics binaries that are painful via pip
 biopython = "*"
 rdkit = "*"
-pysam = ">=0.22"
-pyensembl = ">=2.3.13"
 
 # HuggingFace + transformers runtime
 huggingface_hub = ">=0.35,<1.0"
@@ -91,8 +91,16 @@ embpy = { path = ".", editable = true }
 # pure-Python / PyPI-only deps that embpy imports directly:
 broad-babel = ">=0.1"
 cirpy = "*"
+pyensembl = ">=2.3.13"
 session-info = "*"
 torch-geometric = ">=2.5"
+
+# ---------------------------------------------------------------------------
+# Unix-only conda dependencies (bioconda packages unavailable on win-64).
+# pysam wraps htslib which has no Windows conda build.
+# ---------------------------------------------------------------------------
+[target.unix.dependencies]
+pysam = ">=0.22"
 
 # ---------------------------------------------------------------------------
 # Features -- toggle these on via `[environments]` below.

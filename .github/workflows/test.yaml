@@ -7,6 +7,7 @@ on:
     branches: [main]
   schedule:
     - cron: "0 5 1,15 * *"
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -17,29 +18,47 @@ jobs:
     runs-on: ${{ matrix.os }}
     defaults:
       run:
-        shell: bash -e {0} # -e to fail on error
+        shell: bash -e {0}
 
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
-            python: "3.10"
+            python: "3.11"
           - os: ubuntu-latest
             python: "3.12"
+          - os: ubuntu-latest
+            python: "3.13"
+          - os: macos-latest
+            python: "3.11"
+          - os: macos-latest
+            python: "3.12"
+          - os: macos-latest
+            python: "3.13"
+          - os: windows-latest
+            python: "3.11"
+          - os: windows-latest
+            python: "3.12"
+          - os: windows-latest
+            python: "3.13"
           - os: ubuntu-latest
             python: "3.12"
             pip-flags: "--pre"
             name: PRE-RELEASE DEPENDENCIES
 
-    name: ${{ matrix.name }} Python ${{ matrix.python }}
+    name: ${{ matrix.name || format('{0} / Python {1}', matrix.os, matrix.python) }}
 
     env:
       OS: ${{ matrix.os }}
       PYTHON: ${{ matrix.python }}
+      PYTHONUTF8: "1"
+      PYTORCH_ENABLE_MPS_FALLBACK: "1"
+      MPLBACKEND: agg
 
     steps:
       - uses: actions/checkout@v4
+
       - name: Set up Python ${{ matrix.python }}
         uses: actions/setup-python@v5
         with:
@@ -47,21 +66,54 @@ jobs:
           cache: "pip"
           cache-dependency-path: "**/pyproject.toml"
 
-      - name: Install test dependencies
+      - name: Upgrade pip and wheel
+        run: python -m pip install --upgrade pip wheel
+
+      - name: Install CPU PyTorch wheels
         run: |
-          python -m pip install --upgrade pip wheel
-      - name: Install dependencies
+          pip install torch --extra-index-url https://download.pytorch.org/whl/cpu
+
+      - name: Install embpy with dev+test extras
         run: |
           pip install ${{ matrix.pip-flags }} ".[dev,test]"
-      - name: Test
-        env:
-          MPLBACKEND: agg
-          PLATFORM: ${{ matrix.os }}
-          DISPLAY: :42
+
+      - name: Smoke test
+        run: |
+          python -c "from embpy.embedder import BioEmbedder; e = BioEmbedder(device='cpu'); print(e.device, len(e.list_available_models()))"
+
+      - name: Run test suite
         run: |
           coverage run -m pytest -v --color=yes
+
       - name: Report coverage
         run: |
           coverage report
+
       - name: Upload coverage
         uses: codecov/codecov-action@v3
+
+  test-pixi:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    name: pixi / ${{ matrix.os }}
+
+    env:
+      PYTHONUTF8: "1"
+      PYTORCH_ENABLE_MPS_FALLBACK: "1"
+      MPLBACKEND: agg
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up pixi
+        uses: prefix-dev/setup-pixi@v0.8.1
+        with:
+          environments: default
+          cache: true
+
+      - name: Pixi smoke test
+        run: pixi run -e default verify
