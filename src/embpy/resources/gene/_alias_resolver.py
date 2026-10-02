@@ -38,6 +38,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import tempfile
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -71,7 +72,7 @@ def default_cache_path() -> Path:
     if env:
         base = Path(env)
     else:
-        home = Path.home() if os.environ.get("HOME") else Path("/tmp")
+        home = Path.home() if os.environ.get("HOME") else Path(tempfile.gettempdir())
         base = home / ".cache" / "embpy"
     return base / "symbol_resolution.json"
 
