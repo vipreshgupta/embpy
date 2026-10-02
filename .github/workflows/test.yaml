@@ -73,9 +73,12 @@ jobs:
         run: |
           pip install torch --extra-index-url https://download.pytorch.org/whl/cpu
 
-      - name: Install embpy with dev+test extras
+      - name: Install hatch-vcs (needed for editable install with VCS versioning)
+        run: pip install hatch-vcs
+
+      - name: Install embpy with dev+test extras (editable)
         run: |
-          pip install ${{ matrix.pip-flags }} ".[dev,test]"
+          pip install ${{ matrix.pip-flags }} -e ".[dev,test]"
 
       - name: Smoke test
         run: |

@@ -223,6 +223,8 @@ optional-dependencies.test = [
   "coverage",
   "pytest",
   "pytest-mock",
+  "scanpy>=1.10",
+  "xgboost",
 ]
 
 # https://docs.pypi.org/project_metadata/#project-urls
