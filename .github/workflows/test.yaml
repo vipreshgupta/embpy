@@ -112,8 +112,8 @@ jobs:
       - name: Set up pixi
         uses: prefix-dev/setup-pixi@v0.8.1
         with:
-          environments: default
+          environments: ci
           cache: true
 
       - name: Pixi smoke test
-        run: pixi run -e default verify
+        run: pixi run -e ci verify

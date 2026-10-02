@@ -30,7 +30,7 @@ name = "embpy"
 version = "0.0.1"
 description = "A package for biological embeddings in the perturbation experimental space"
 authors = ["Goncalo Rei Pinto <goncalo.pinto@helmholtz-munich.de>"]
-channels = ["conda-forge", "bioconda", "pytorch", "nvidia"]
+channels = ["conda-forge", "pytorch", "nvidia"]
 # Only linux-64 gets the CUDA env (no NVIDIA on macOS / Apple Silicon).
 # Apple Silicon uses PyTorch's MPS backend through the conda-forge build.
 platforms = ["linux-64", "osx-arm64", "osx-64", "win-64"]
@@ -522,7 +522,14 @@ embpy = { path = ".", editable = true, extras = ["dev", "test"] }
 # ---------------------------------------------------------------------------
 [environments]
 # Default CPU env for anyone who just wants to try embpy.
+# Scoped to linux-64 and osx-arm64 where the full feature set
+# (jump-portrait s3fs, esm3 transformers pin, bioconda pysam) resolves cleanly.
 default = { features = ["cpu", "morphology", "jump", "scanpy", "esm3", "seqmodels", "jupyter"], solve-group = "cpu" }
+
+# Lightweight cross-platform env used by the GitHub Actions `test-pixi` job.
+# Only includes features that resolve on all 4 platforms (linux-64, osx-arm64,
+# osx-64, win-64) without bioconda or S3/jump-portrait.
+ci = { features = ["cpu", "morphology", "scanpy"], solve-group = "ci" }
 
 # Apple Silicon env. Same package stack as `default`, but named for the
 # PyTorch MPS backend and exposing MPS-specific helper tasks.
@@ -652,7 +659,7 @@ install-kernel = "python -m ipykernel install --user --name embpy --display-name
 jupyter = "jupyter lab --no-browser --ip 0.0.0.0"
 # Quick interactive shell for working in the package. It drops you into
 # the activated default env with PYTHONNOUSERSITE=1 already set.
-embpy-shell = { cmd = "bash -c 'cd src/embpy && exec bash -i'", description = "Interactive bash, cwd=src/embpy/" }
+embpy-shell = { cmd = "python -c \"import os, sys; os.chdir('src/embpy'); os.execv(sys.executable, [sys.executable])\"", description = "Drop into Python REPL in src/embpy/ (cross-platform)" }
 
 [feature.gpu.tasks]
 # GPU smoke test (assumes CUDA is visible: run on a GPU node or with CUDA_VISIBLE_DEVICES set).
