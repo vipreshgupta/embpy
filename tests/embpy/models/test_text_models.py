@@ -37,13 +37,13 @@ class TestTextLLMWrapper:
 
     def test_embed_batch_empty_returns_empty(self):
         w = TextLLMWrapper()
-        w.model = MagicMock()
+        w.model = MagicMock(); w.tokenizer = MagicMock()
         w.device = torch.device("cpu")
         assert w.embed_batch([]) == []
 
     def test_invalid_pooling_raises(self):
         w = TextLLMWrapper()
-        w.model = MagicMock()
+        w.model = MagicMock(); w.tokenizer = MagicMock()
         w.device = torch.device("cpu")
         with pytest.raises(ValueError, match="Invalid pooling"):
             w.embed("Hello", pooling_strategy="invalid")

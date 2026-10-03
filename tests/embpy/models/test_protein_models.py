@@ -36,13 +36,13 @@ class TestESM2Wrapper:
 
     def test_embed_batch_empty_returns_empty(self):
         w = ESM2Wrapper()
-        w.model = MagicMock()
+        w.model = MagicMock(); w.tokenizer = MagicMock()
         w.device = torch.device("cpu")
         assert w.embed_batch([]) == []
 
     def test_invalid_pooling_raises(self):
         w = ESM2Wrapper()
-        w.model = MagicMock()
+        w.model = MagicMock(); w.tokenizer = MagicMock()
         w.device = torch.device("cpu")
         w.tokenizer = MagicMock()
         w.tokenizer.return_value = {
@@ -208,7 +208,7 @@ class TestProtT5Wrapper:
         from embpy.models.protein_models import ProtT5Wrapper
 
         w = ProtT5Wrapper()
-        w.model = MagicMock()
+        w.model = MagicMock(); w.tokenizer = MagicMock()
         w.device = torch.device("cpu")
         assert w.embed_batch([]) == []
 
@@ -223,7 +223,7 @@ class TestProtT5Wrapper:
         from embpy.models.protein_models import ProtT5Wrapper
 
         w = ProtT5Wrapper()
-        w.model = MagicMock()
+        w.model = MagicMock(); w.tokenizer = MagicMock()
         w.device = torch.device("cpu")
         w.tokenizer = MagicMock()
         with pytest.raises(ValueError, match="Invalid pooling"):

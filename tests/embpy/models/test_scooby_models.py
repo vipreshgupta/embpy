@@ -76,7 +76,7 @@ class TestScoobyWrapperLoad:
 
     def test_load_already_loaded_is_noop(self):
         w = ScoobyWrapper()
-        w.model = MagicMock()
+        w.model = MagicMock(); w.tokenizer = MagicMock()
         mock_scooby_cls = MagicMock()
         with patch.object(sm, "Scooby", mock_scooby_cls):
             w.load(torch.device("cpu"))
@@ -298,7 +298,7 @@ class TestScoobyWrapperEmbed:
 
     def test_embed_invalid_pooling_raises(self):
         w = ScoobyWrapper()
-        w.model = MagicMock()
+        w.model = MagicMock(); w.tokenizer = MagicMock()
         w.device = torch.device("cpu")
         with pytest.raises(ValueError, match="Invalid pooling"):
             w.embed("ACGT", pooling_strategy="invalid")
@@ -368,6 +368,6 @@ class TestScoobyWrapperEmbed:
 
     def test_embed_batch_empty_returns_empty(self):
         w = ScoobyWrapper()
-        w.model = MagicMock()
+        w.model = MagicMock(); w.tokenizer = MagicMock()
         w.device = torch.device("cpu")
         assert w.embed_batch([]) == []

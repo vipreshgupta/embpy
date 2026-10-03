@@ -39,7 +39,7 @@ class TestChembertaWrapper:
         from embpy.models.molecule_models import ChembertaWrapper
 
         w = ChembertaWrapper()
-        w.model = MagicMock()
+        w.model = MagicMock(); w.tokenizer = MagicMock()
         w.device = torch.device("cpu")
         w.tokenizer = MagicMock()
         w.max_len = 512
@@ -113,7 +113,7 @@ class TestChembertaWrapper:
 
         w = ChembertaWrapper()
         w.device = torch.device("cpu")
-        w.model = MagicMock()
+        w.model = MagicMock(); w.tokenizer = MagicMock()
         w.tokenizer = MagicMock()
         w.max_len = 10
         w._token_length = MagicMock(return_value=100)
@@ -162,7 +162,7 @@ class TestMolformerWrapper:
         from embpy.models.molecule_models import MolformerWrapper
 
         w = MolformerWrapper()
-        w.model = MagicMock()
+        w.model = MagicMock(); w.tokenizer = MagicMock()
         w.device = torch.device("cpu")
         with pytest.raises(ValueError, match="Invalid pooling"):
             w.embed("CCO", pooling_strategy="invalid")

@@ -707,12 +707,6 @@ def to_anndata(
         _store_uns_embedding(target, result, out_key)
         return target
 
-    if attach_to == "auto":
-        if _is_perturbation_result(result):
-            attach_to = "obs"
-        elif result.entity_type == "gene":
-            attach_to = "var"
-
     axis = _resolve_axis(result, target, attach_to, min_overlap)
     if axis == "obs":
         mat = _reindex_matrix(result, list(target.obs_names), missing, "obs")

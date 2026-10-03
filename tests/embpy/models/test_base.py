@@ -465,7 +465,7 @@ class TestEmbedAllLayers:
 
     def test_embed_all_layers_invalid_pooling_raises(self):
         w = ConcreteWrapper()
-        w.model = MagicMock()
+        w.model = MagicMock(); w.tokenizer = MagicMock()
         w.device = torch.device("cpu")
         with pytest.raises(ValueError, match="Invalid pooling strategy"):
             w.embed_all_layers(torch.zeros(1, 5, dtype=torch.long), pooling_strategy="bad")

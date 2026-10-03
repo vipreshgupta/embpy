@@ -388,8 +388,13 @@ class TestSNPEmbedderEmbedSNP:
         assert result.delta_embeddings == []
         assert result.delta_norms == []
 
-    def test_compute_delta_true_is_default(self):
+    def test_compute_delta_default_is_false(self):
         result = SNPEmbedder(_make_wrapper()).embed_snp(_make_snp(), chromosome_sequence=CHR_SEQ)
+        assert result.delta_embeddings == []
+        assert result.delta_norms == []
+
+    def test_compute_delta_true_computes_delta(self):
+        result = SNPEmbedder(_make_wrapper()).embed_snp(_make_snp(), chromosome_sequence=CHR_SEQ, compute_delta=True)
         assert len(result.delta_embeddings) == 1
         assert len(result.delta_norms) == 1
 

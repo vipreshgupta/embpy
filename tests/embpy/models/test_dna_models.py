@@ -71,13 +71,13 @@ class TestEnformerWrapper:
 
     def test_embed_batch_empty_returns_empty(self):
         w = EnformerWrapper()
-        w.model = MagicMock()
+        w.model = MagicMock(); w.tokenizer = MagicMock()
         w.device = torch.device("cpu")
         assert w.embed_batch([]) == []
 
     def test_invalid_pooling_strategy_raises(self):
         w = EnformerWrapper()
-        w.model = MagicMock()
+        w.model = MagicMock(); w.tokenizer = MagicMock()
         w.device = torch.device("cpu")
         with pytest.raises(ValueError, match="Invalid pooling"):
             w.embed("ACGT", pooling_strategy="invalid")
@@ -103,7 +103,7 @@ class TestEnformerWrapper:
 
         num_bins = 896
         trunk_tensor = torch.randn(1, num_bins, 3072)
-        w.model = MagicMock()
+        w.model = MagicMock(); w.tokenizer = MagicMock()
         w.model.return_value = (None, trunk_tensor)
 
         with patch("embpy.models.dna_models.seq_indices_to_one_hot") as mock_one_hot:
@@ -120,7 +120,7 @@ class TestEnformerWrapper:
 
         num_bins = 896
         trunk_tensor = torch.randn(1, num_bins, 3072)
-        w.model = MagicMock()
+        w.model = MagicMock(); w.tokenizer = MagicMock()
         w.model.return_value = (None, trunk_tensor)
 
         with patch("embpy.models.dna_models.seq_indices_to_one_hot") as mock_one_hot:
@@ -150,13 +150,13 @@ class TestBorzoiWrapper:
 
     def test_embed_batch_empty_returns_empty(self):
         w = BorzoiWrapper()
-        w.model = MagicMock()
+        w.model = MagicMock(); w.tokenizer = MagicMock()
         w.device = torch.device("cpu")
         assert w.embed_batch([]) == []
 
     def test_invalid_pooling_raises(self):
         w = BorzoiWrapper()
-        w.model = MagicMock()
+        w.model = MagicMock(); w.tokenizer = MagicMock()
         w.device = torch.device("cpu")
         with pytest.raises(ValueError, match="Invalid pooling"):
             w.embed("ACGT", pooling_strategy="invalid")
@@ -276,11 +276,13 @@ class TestBorzoiWrapper:
             _ = w.profile_offset_bp
 
     def test_get_track_metadata_returns_dataframe(self):
+        pytest.importorskip("borzoi_pytorch", reason="Requires borzoi_pytorch")
         df = BorzoiWrapper.get_track_metadata()
         assert "identifier" in df.columns
         assert len(df) > 0
 
     def test_get_track_categories_splits_rna_by_source_path(self):
+        pytest.importorskip("borzoi_pytorch", reason="Requires borzoi_pytorch")
         import pandas as pd
 
         tm = pd.DataFrame({
@@ -511,7 +513,7 @@ class TestEvoWrapper:
         assert "evo-1-8k-transposon" in EvoWrapper.AVAILABLE_MODELS
 
     def test_pooling_strategies(self):
-        assert EvoWrapper.available_pooling_strategies == ["mean", "max", "cls"]
+        assert EvoWrapper.available_pooling_strategies == ["mean", "max", "cls", "none"]
 
     # --- Error handling (before load) ---
 
@@ -785,13 +787,13 @@ class TestGENALMWrapper:
 
     def test_embed_batch_empty_returns_empty(self):
         w = GENALMWrapper()
-        w.model = MagicMock()
+        w.model = MagicMock(); w.tokenizer = MagicMock()
         w.device = torch.device("cpu")
         assert w.embed_batch([]) == []
 
     def test_invalid_pooling_raises(self):
         w = GENALMWrapper()
-        w.model = MagicMock()
+        w.model = MagicMock(); w.tokenizer = MagicMock()
         w.device = torch.device("cpu")
         with pytest.raises(ValueError, match="Invalid pooling"):
             w.embed("ACGT", pooling_strategy="invalid")
@@ -907,13 +909,13 @@ class TestNucleotideTransformerWrapper:
 
     def test_embed_batch_empty_returns_empty(self):
         w = NucleotideTransformerWrapper()
-        w.model = MagicMock()
+        w.model = MagicMock(); w.tokenizer = MagicMock()
         w.device = torch.device("cpu")
         assert w.embed_batch([]) == []
 
     def test_invalid_pooling_raises(self):
         w = NucleotideTransformerWrapper()
-        w.model = MagicMock()
+        w.model = MagicMock(); w.tokenizer = MagicMock()
         w.device = torch.device("cpu")
         with pytest.raises(ValueError, match="Invalid pooling"):
             w.embed("ACGT", pooling_strategy="bad")
@@ -1047,13 +1049,13 @@ class TestHyenaDNAWrapper:
 
     def test_embed_batch_empty_returns_empty(self):
         w = HyenaDNAWrapper()
-        w.model = MagicMock()
+        w.model = MagicMock(); w.tokenizer = MagicMock()
         w.device = torch.device("cpu")
         assert w.embed_batch([]) == []
 
     def test_invalid_pooling_raises(self):
         w = HyenaDNAWrapper()
-        w.model = MagicMock()
+        w.model = MagicMock(); w.tokenizer = MagicMock()
         w.device = torch.device("cpu")
         with pytest.raises(ValueError, match="Invalid pooling"):
             w.embed("ACGT", pooling_strategy="invalid")
@@ -1152,13 +1154,13 @@ class TestCaduceusWrapper:
 
     def test_embed_batch_empty_returns_empty(self):
         w = CaduceusWrapper()
-        w.model = MagicMock()
+        w.model = MagicMock(); w.tokenizer = MagicMock()
         w.device = torch.device("cpu")
         assert w.embed_batch([]) == []
 
     def test_invalid_pooling_raises(self):
         w = CaduceusWrapper()
-        w.model = MagicMock()
+        w.model = MagicMock(); w.tokenizer = MagicMock()
         w.device = torch.device("cpu")
         with pytest.raises(ValueError, match="Invalid pooling"):
             w.embed("ACGT", pooling_strategy="bad")
