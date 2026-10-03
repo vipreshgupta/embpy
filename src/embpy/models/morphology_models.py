@@ -161,6 +161,7 @@ class SubCellWrapper(BaseModelWrapper):
         **kwargs: Any,
     ):
         super().__init__(model_path_or_name, **kwargs)
+        self.variant = variant or "contrast"
         self.image_size = image_size
         self._encoder = None
         self._pool_model = None

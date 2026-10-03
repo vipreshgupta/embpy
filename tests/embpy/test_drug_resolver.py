@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from embpy.resources.drug_resolver import DrugResolver
+from embpy.resources.molecule.resolver import DrugResolver
 
 
 @pytest.fixture
@@ -28,7 +28,7 @@ class TestNameToSmiles:
         mock_response.json.return_value = {"PropertyTable": {"Properties": [{"IsomericSMILES": "CCO"}]}}
         mock_response.raise_for_status = MagicMock()
 
-        with patch("embpy.resources.drug_resolver.requests.get", return_value=mock_response):
+        with patch("embpy.resources.molecule.resolver.requests.get", return_value=mock_response):
             result = resolver.name_to_smiles("ethanol")
             assert result == "CCO"
 
@@ -50,7 +50,7 @@ class TestNameToSmiles:
                 mock.json.return_value = {"PropertyTable": {"Properties": [{"IsomericSMILES": "CCO"}]}}
                 return mock
 
-        with patch("embpy.resources.drug_resolver.requests.get", side_effect=side_effect):
+        with patch("embpy.resources.molecule.resolver.requests.get", side_effect=side_effect):
             result = resolver.name_to_smiles("ethanol")
             assert result == "CCO"
 
@@ -58,7 +58,7 @@ class TestNameToSmiles:
         mock = MagicMock()
         mock.raise_for_status.side_effect = Exception("API error")
 
-        with patch("embpy.resources.drug_resolver.requests.get", return_value=mock):
+        with patch("embpy.resources.molecule.resolver.requests.get", return_value=mock):
             result = resolver.name_to_smiles("completely_fake_drug_xyz")
             assert result is None
 
@@ -82,7 +82,7 @@ class TestSmilesToNames:
                 }
             return mock
 
-        with patch("embpy.resources.drug_resolver.requests.get", side_effect=side_effect):
+        with patch("embpy.resources.molecule.resolver.requests.get", side_effect=side_effect):
             names = resolver.smiles_to_names("CCO", top_k=3)
             assert len(names) <= 3
             assert "Ethanol" in names
@@ -92,7 +92,7 @@ class TestSmilesToNames:
         mock.raise_for_status = MagicMock()
         mock.json.return_value = {"IdentifierList": {"CID": []}}
 
-        with patch("embpy.resources.drug_resolver.requests.get", return_value=mock):
+        with patch("embpy.resources.molecule.resolver.requests.get", return_value=mock):
             names = resolver.smiles_to_names("INVALID_SMILES")
             assert names == []
 
@@ -126,7 +126,7 @@ class TestCidToNames:
                 }
             return mock
 
-        with patch("embpy.resources.drug_resolver.requests.get", side_effect=side_effect):
+        with patch("embpy.resources.molecule.resolver.requests.get", side_effect=side_effect):
             names = resolver.cid_to_names(2244)
             assert "Aspirin" in names
 
@@ -231,19 +231,19 @@ class TestNameToSmilesClassification:
     """Verify that name_to_smiles skips non-drug identifiers without HTTP calls."""
 
     def test_skips_control(self, resolver):
-        with patch("embpy.resources.drug_resolver.requests.get") as mock_get:
+        with patch("embpy.resources.molecule.resolver.requests.get") as mock_get:
             result = resolver.name_to_smiles("control")
             assert result is None
             mock_get.assert_not_called()
 
     def test_skips_target_description(self, resolver):
-        with patch("embpy.resources.drug_resolver.requests.get") as mock_get:
+        with patch("embpy.resources.molecule.resolver.requests.get") as mock_get:
             result = resolver.name_to_smiles("ACLY.inhibitor")
             assert result is None
             mock_get.assert_not_called()
 
     def test_skips_vehicle(self, resolver):
-        with patch("embpy.resources.drug_resolver.requests.get") as mock_get:
+        with patch("embpy.resources.molecule.resolver.requests.get") as mock_get:
             result = resolver.name_to_smiles("vehicle")
             assert result is None
             mock_get.assert_not_called()
@@ -271,7 +271,7 @@ class TestNameToSmilesSaltFallback:
             mock.raise_for_status.side_effect = Exception("Not found")
             return mock
 
-        with patch("embpy.resources.drug_resolver.requests.get", side_effect=side_effect):
+        with patch("embpy.resources.molecule.resolver.requests.get", side_effect=side_effect):
             result = resolver.name_to_smiles("ethanol (hydrochloride)")
             assert result == "CCO"
 
@@ -288,8 +288,8 @@ class TestCirpyFallback:
             return mock
 
         with (
-            patch("embpy.resources.drug_resolver.requests.get", side_effect=http_always_fails),
-            patch("embpy.resources.drug_resolver.cirpy") as mock_cirpy,
+            patch("embpy.resources.molecule.resolver.requests.get", side_effect=http_always_fails),
+            patch("embpy.resources.molecule.resolver.cirpy") as mock_cirpy,
         ):
             mock_cirpy.resolve.return_value = "CCO"
             result = resolver._try_resolve("some-obscure-drug")
@@ -304,7 +304,7 @@ class TestCirpyFallback:
             mock.raise_for_status.side_effect = Exception("Not found")
             return mock
 
-        with patch("embpy.resources.drug_resolver.requests.get", side_effect=http_always_fails):
+        with patch("embpy.resources.molecule.resolver.requests.get", side_effect=http_always_fails):
             result = resolver._try_resolve("some-obscure-drug")
             assert result is None
 

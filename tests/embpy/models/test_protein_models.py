@@ -150,7 +150,7 @@ class TestESM2Wrapper:
         seq_len = 12
 
         mock_output = MagicMock()
-        mock_output.last_hidden_state = torch.randn(1, seq_len, hidden_dim)
+        mock_output.last_hidden_state = torch.randn(2, seq_len, hidden_dim)
         mock_output.hidden_states = None
 
         mock_model = MagicMock()
@@ -159,8 +159,8 @@ class TestESM2Wrapper:
 
         mock_tokenizer = MagicMock()
         mock_tokenizer.return_value = {
-            "input_ids": torch.zeros(1, seq_len, dtype=torch.long),
-            "attention_mask": torch.ones(1, seq_len, dtype=torch.long),
+            "input_ids": [[0]*seq_len, [0]*seq_len],
+            "attention_mask": [[1]*seq_len, [1]*seq_len],
         }
         w.tokenizer = mock_tokenizer
 
@@ -348,6 +348,11 @@ class TestProtT5Wrapper:
 
     def test_embed_batch_returns_list(self):
         w, _ = self._make_loaded_wrapper()
+        w.model.return_value.last_hidden_state = torch.randn(2, 12, 1024)
+        w.tokenizer.return_value = {
+            "input_ids": torch.zeros(2, 12, dtype=torch.long),
+            "attention_mask": torch.ones(2, 12, dtype=torch.long),
+        }
         results = w.embed_batch(["MTEYKLVVVG", "ACDEFGHIKL"])
         assert len(results) == 2
         for r in results:
@@ -425,6 +430,7 @@ class TestESM3Wrapper:
             w.embed("MTEYKLVVVG")
 
     def test_embed_with_mock(self):
+        pytest.importorskip("esm")
         from embpy.models.protein_models import ESM3Wrapper
 
         w = ESM3Wrapper()
@@ -444,6 +450,7 @@ class TestESM3Wrapper:
         assert emb.ndim == 1
 
     def test_embed_batch(self):
+        pytest.importorskip("esm")
         from embpy.models.protein_models import ESM3Wrapper
 
         w = ESM3Wrapper()

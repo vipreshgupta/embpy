@@ -129,8 +129,17 @@ class TestChembertaWrapper:
         w.max_len = 512
 
         hidden_dim = 768
-        mock_emb = np.zeros(hidden_dim, dtype=np.float32)
-        w.embed = MagicMock(return_value=mock_emb)
+        seq_len = 8
+        mock_output = MagicMock()
+        mock_output.last_hidden_state = torch.randn(2, seq_len, hidden_dim)
+        mock_output.pooler_output = None
+        w.model = MagicMock(return_value=mock_output)
+        w.tokenizer = MagicMock()
+        w.tokenizer.return_value = {
+            "input_ids": torch.zeros(2, seq_len, dtype=torch.long),
+            "attention_mask": torch.ones(2, seq_len, dtype=torch.long),
+        }
+        w._token_length = MagicMock(return_value=5)
 
         results = w.embed_batch(["CCO", "CCC"])
         assert len(results) == 2

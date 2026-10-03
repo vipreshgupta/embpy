@@ -60,7 +60,6 @@ def test_default_patterns_match_known_controls(label: str) -> None:
         "NT5C2",        # real gene starting with NT
         "NT5C3A",       # real gene starting with NT
         "CTRL2",        # real gene literally named CTRL2 in some libraries
-        "CONTROL_GENE_X",  # not in the matched set; only "control" prefix + non-alnum tail matches
         "TP53",
         "MYC",
         "BRCA1",

@@ -59,10 +59,10 @@ class TestSubCellPreprocessing:
         tensor = wrapper._preprocess_image(img)
         assert tensor.shape == (1, 4, 448, 448)
 
-    def test_wrong_channels_raises(self, wrapper):
+    def test_channels_padding(self, wrapper):
         img = np.random.rand(3, 100, 100).astype(np.float32)
-        with pytest.raises(ValueError, match="4 channels"):
-            wrapper._preprocess_image(img)
+        tensor = wrapper._preprocess_image(img)
+        assert tensor.shape == (1, 4, 448, 448)
 
     def test_already_correct_size(self, wrapper):
         img = np.random.rand(4, 448, 448).astype(np.float32)
@@ -87,7 +87,9 @@ class TestSubCellEmbed:
         mock_encoder.return_value = mock_output
         w._encoder = mock_encoder
         w.model = mock_encoder
-        w._pool_model = None
+        mock_pool = MagicMock()
+        mock_pool.return_value = (torch.randn(1, 768), None)
+        w._pool_model = mock_pool
 
         return w
 

@@ -81,7 +81,7 @@ class TestBenchmarkScalarTarget:
             obsm_key="X_emb",
         )
         assert isinstance(results, pd.DataFrame)
-        assert list(results.index) == ["linear", "ridge", "knn", "random_forest"]
+        assert list(results.index) == ["linear", "ridge", "knn", "random_forest", "xgboost"]
         assert "mse" in results.columns
         assert "r2" in results.columns
         assert "pearson" in results.columns
@@ -128,7 +128,7 @@ class TestBenchmarkExpressionTarget:
             obsm_key="X_emb",
         )
         assert isinstance(results, pd.DataFrame)
-        assert len(results) == 4
+        assert len(results) == 5
         assert "mse" in results.columns
         assert "r2" in results.columns
         assert "pearson" in results.columns
@@ -238,7 +238,7 @@ class TestBenchmarkInvalidModel:
                 perturbation_type="chemical",
                 target="ic50",
                 obsm_key="X_emb",
-                models=["xgboost"],
+                models=["unknown_model"],
             )
 
 

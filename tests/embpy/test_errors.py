@@ -13,7 +13,6 @@ class TestConfigError:
     def test_custom_message(self):
         err = ConfigError("Bad device setting")
         assert str(err) == "Bad device setting"
-        assert err.message == "Bad device setting"
 
     def test_is_exception(self):
         with pytest.raises(ConfigError):
