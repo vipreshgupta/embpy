@@ -99,8 +99,6 @@ torch-geometric = ">=2.5"
 # Unix-only conda dependencies (bioconda packages unavailable on win-64).
 # pysam wraps htslib which has no Windows conda build.
 # ---------------------------------------------------------------------------
-[target.unix.dependencies]
-pysam = ">=0.22"
 
 # ---------------------------------------------------------------------------
 # Features -- toggle these on via `[environments]` below.

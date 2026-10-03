@@ -142,11 +142,12 @@ class TestListFiles:
 
 
 class TestUploadFile:
-    def test_upload_file(self, handler):
+    def test_upload_file(self, handler, tmp_path):
         handler._api.upload_file = MagicMock()
-        handler.upload_file("/tmp/foo.h5ad", "raw/tahoe.h5ad")
+        fake_file = tmp_path / "foo.h5ad"
+        handler.upload_file(str(fake_file), "raw/tahoe.h5ad")
         handler._api.upload_file.assert_called_once_with(
-            path_or_fileobj="/tmp/foo.h5ad",
+            path_or_fileobj=str(fake_file),
             path_in_repo="raw/tahoe.h5ad",
             repo_id="user/test-repo",
             repo_type="dataset",

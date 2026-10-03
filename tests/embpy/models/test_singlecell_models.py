@@ -534,8 +534,11 @@ class TestStateEmbeddingWrapper:
         adata = _make_fake_adata()
         adata.write_h5ad = MagicMock()
 
+        import tempfile
+        import os
+        mock_tmp = os.path.join(tempfile.gettempdir(), "fake")
         with patch("tempfile.TemporaryDirectory") as mock_tmpdir:
-            mock_tmpdir.return_value.__enter__ = MagicMock(return_value="/tmp/fake")
+            mock_tmpdir.return_value.__enter__ = MagicMock(return_value=mock_tmp)
             mock_tmpdir.return_value.__exit__ = MagicMock(return_value=False)
             embs = wrapper.embed_cells(adata)
 

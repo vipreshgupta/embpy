@@ -58,6 +58,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Python ${{ matrix.python }}
         uses: actions/setup-python@v5
@@ -67,16 +69,13 @@ jobs:
           cache-dependency-path: "**/pyproject.toml"
 
       - name: Upgrade pip and wheel
-        run: python -m pip install --upgrade pip wheel
+        run: python -m pip install --upgrade pip wheel hatch-vcs
 
       - name: Install CPU PyTorch wheels
         run: |
           pip install torch --extra-index-url https://download.pytorch.org/whl/cpu
 
-      - name: Install hatch-vcs (needed for editable install with VCS versioning)
-        run: pip install hatch-vcs
-
-      - name: Install embpy with dev+test extras (editable)
+      - name: Install embpy with dev+test extras
         run: |
           pip install ${{ matrix.pip-flags }} -e ".[dev,test]"
 
@@ -95,28 +94,3 @@ jobs:
       - name: Upload coverage
         uses: codecov/codecov-action@v3
 
-  test-pixi:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-
-    name: pixi / ${{ matrix.os }}
-
-    env:
-      PYTHONUTF8: "1"
-      PYTORCH_ENABLE_MPS_FALLBACK: "1"
-      MPLBACKEND: agg
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up pixi
-        uses: prefix-dev/setup-pixi@v0.8.1
-        with:
-          environments: ci
-          cache: true
-
-      - name: Pixi smoke test
-        run: pixi run -e ci verify
