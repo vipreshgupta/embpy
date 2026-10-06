@@ -495,7 +495,7 @@ class TestEmbedVCF:
         from embpy.tl.snp_utils import embed_vcf
 
         vcf_file = tmp_path / "test.vcf"
-        vcf_file.write_text(self._vcf_content(, encoding='utf-8'))
+        vcf_file.write_text(self._vcf_content(), encoding='utf-8')
 
         wrapper = _make_wrapper()
         results = embed_vcf(
@@ -510,7 +510,7 @@ class TestEmbedVCF:
         from embpy.tl.snp_utils import embed_vcf
 
         vcf_file = tmp_path / "test.vcf"
-        vcf_file.write_text(self._vcf_content(, encoding='utf-8'))
+        vcf_file.write_text(self._vcf_content(), encoding='utf-8')
 
         wrapper = _make_wrapper()
         results = embed_vcf(
@@ -525,7 +525,7 @@ class TestEmbedVCF:
         from embpy.tl.snp_utils import embed_vcf
 
         vcf_file = tmp_path / "test.vcf"
-        vcf_file.write_text(self._vcf_content(, encoding='utf-8'))
+        vcf_file.write_text(self._vcf_content(), encoding='utf-8')
 
         wrapper = _make_wrapper()
         results = embed_vcf(
