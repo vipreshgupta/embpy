@@ -972,7 +972,9 @@ class MolEWrapper(BaseModelWrapper):
             raise RuntimeError("MolE not loaded. Call load() first.")
 
         batch_size: int = kwargs.get("batch_size", 32)  # type: ignore[assignment]
-        num_workers: int = kwargs.get("num_workers", 4)  # type: ignore[assignment]
+        import sys
+        default_workers = 0 if sys.platform == "win32" else 4
+        num_workers: int = kwargs.get("num_workers", default_workers)  # type: ignore[assignment]
 
         embeddings = self._mole_predict.encode(
             smiles=list(inputs),

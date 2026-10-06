@@ -50,7 +50,7 @@ class TestGeneResolverLocalIndexedSequence:
             ">17\n"
             "NNNATCGATCGAAATTTCCCGGGAAATTTCCCGGGNNNNN\n"
             "ATCGATCGATCGATCGATCGATCGATCGATCGATCGATCG\n"
-        )
+        , encoding='utf-8')
         pysam.faidx(str(fa_path))
 
         gr = GeneResolver.__new__(GeneResolver)

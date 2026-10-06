@@ -732,7 +732,7 @@ class TestMolEWrapper:
             smiles=["CCO", "CCC", "c1ccccc1"],
             pretrained_model="/path/to/ckpt",
             batch_size=32,
-            num_workers=4,
+            num_workers=0 if sys.platform == "win32" else 4,
         )
 
     def test_embed_custom_batch_kwargs(self):

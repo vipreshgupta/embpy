@@ -310,7 +310,7 @@ def load_static_embedding_source_config(
     if not path.is_file():
         raise FileNotFoundError(f"Static embedding source config not found: {path}")
     try:
-        payload = json.loads(path.read_text())
+        payload = json.loads(path.read_text(encoding='utf-8'))
     except json.JSONDecodeError as exc:
         raise ValueError(f"Source config {path} is not valid JSON: {exc}") from exc
 
@@ -631,7 +631,7 @@ def validate_static_embedding_package(path: str | Path) -> list[StaticEmbeddingV
 
     manifest_path = root / "manifest.json"
     if manifest_path.is_file():
-        manifest = json.loads(manifest_path.read_text())
+        manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
         keys = sorted((manifest.get("embeddings") or {}).keys())
     else:
         embeddings_dir = root / "embeddings"
@@ -686,7 +686,7 @@ def load_static_embedding_package(path: str | Path, *, key: str | None = None) -
     manifest_path = root / "manifest.json"
     if not manifest_path.is_file():
         raise FileNotFoundError(f"Expected a model package directory or manifest.json under {root}.")
-    manifest = json.loads(manifest_path.read_text())
+    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
     keys = sorted((manifest.get("embeddings") or {}).keys())
     if len(keys) != 1:
         raise ValueError(f"Package {root} contains {len(keys)} embeddings; pass key=... to select one.")
@@ -878,8 +878,8 @@ def write_static_embedding_dataset_card(
     card_path = root / DATASET_CARD_NAME
     if card_path.exists() and not overwrite:
         raise FileExistsError(f"Dataset card already exists: {card_path}. Pass overwrite=True to replace it.")
-    manifest = json.loads(manifest_path.read_text())
-    card_path.write_text(render_static_embedding_dataset_card(manifest, repo_id=repo_id), encoding="utf-8")
+    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+    card_path.write_text(render_static_embedding_dataset_card(manifest, repo_id=repo_id, encoding='utf-8'), encoding="utf-8")
     logger.info("Wrote static embedding dataset card: %s", card_path)
     return card_path
 
@@ -928,8 +928,8 @@ class StaticEmbeddingStore:
 
         return cls(
             model_dir,
-            metadata=json.loads(metadata_path.read_text()),
-            uns=json.loads(uns_path.read_text()),
+            metadata=json.loads(metadata_path.read_text(encoding='utf-8')),
+            uns=json.loads(uns_path.read_text(encoding='utf-8')),
             index=pd.read_parquet(index_path),
         )
 
@@ -2396,7 +2396,7 @@ def _first_duplicate(ids: Sequence[str]) -> str | None:
 
 def _write_json(path: Path, value: Mapping[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(_json_safe(value), indent=2, sort_keys=True))
+    path.write_text(json.dumps(_json_safe(value, encoding='utf-8'), indent=2, sort_keys=True))
 
 
 def _json_safe(value: object) -> Any:

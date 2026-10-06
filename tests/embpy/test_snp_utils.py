@@ -495,7 +495,7 @@ class TestEmbedVCF:
         from embpy.tl.snp_utils import embed_vcf
 
         vcf_file = tmp_path / "test.vcf"
-        vcf_file.write_text(self._vcf_content())
+        vcf_file.write_text(self._vcf_content(, encoding='utf-8'))
 
         wrapper = _make_wrapper()
         results = embed_vcf(
@@ -510,7 +510,7 @@ class TestEmbedVCF:
         from embpy.tl.snp_utils import embed_vcf
 
         vcf_file = tmp_path / "test.vcf"
-        vcf_file.write_text(self._vcf_content())
+        vcf_file.write_text(self._vcf_content(, encoding='utf-8'))
 
         wrapper = _make_wrapper()
         results = embed_vcf(
@@ -525,7 +525,7 @@ class TestEmbedVCF:
         from embpy.tl.snp_utils import embed_vcf
 
         vcf_file = tmp_path / "test.vcf"
-        vcf_file.write_text(self._vcf_content())
+        vcf_file.write_text(self._vcf_content(, encoding='utf-8'))
 
         wrapper = _make_wrapper()
         results = embed_vcf(
@@ -542,7 +542,7 @@ class TestEmbedVCF:
         from embpy.tl.snp_utils import embed_vcf
 
         vcf_gz = tmp_path / "test.vcf.gz"
-        with gzip.open(vcf_gz, "wt") as fh:
+        with gzip.open(vcf_gz, "wt", encoding='utf-8') as fh:
             fh.write(self._vcf_content())
 
         wrapper = _make_wrapper()
@@ -560,7 +560,7 @@ class TestEmbedVCF:
         # Add extra ## comment lines — should all be ignored
         content = "##extra=header\n" * 5 + self._vcf_content()
         vcf_file = tmp_path / "test.vcf"
-        vcf_file.write_text(content)
+        vcf_file.write_text(content, encoding='utf-8')
 
         results = embed_vcf(
             vcf_path=str(vcf_file),
@@ -574,7 +574,7 @@ class TestEmbedVCF:
 class TestSequenceProvider:
 
     def _write_fasta(self, path, chrom_name: str, seq: str) -> None:
-        path.write_text(f">{chrom_name}\n{seq}\n")
+        path.write_text(f">{chrom_name}\n{seq}\n", encoding='utf-8')
 
     def test_get_chromosome_from_fasta_dir(self, tmp_path):
         fa = tmp_path / "chr17.fa"
@@ -654,7 +654,7 @@ class TestSequenceProvider:
 
     def test_get_chromosome_from_fasta_file(self, tmp_path):
         fa = tmp_path / "genome.fa"
-        fa.write_text(f">chr17\n{CHR_SEQ}\n>chr1\n{'ACGT' * 50}\n")
+        fa.write_text(f">chr17\n{CHR_SEQ}\n>chr1\n{'ACGT' * 50}\n", encoding='utf-8')
 
         provider = SequenceProvider(fasta_file=str(fa))
         seq = provider.get_chromosome("chr17")
@@ -664,7 +664,7 @@ class TestSequenceProvider:
     def test_multiple_chroms_from_single_file(self, tmp_path):
         chr1_seq = "TTTT" * 100
         fa = tmp_path / "genome.fa"
-        fa.write_text(f">chr17\n{CHR_SEQ}\n>chr1\n{chr1_seq}\n")
+        fa.write_text(f">chr17\n{CHR_SEQ}\n>chr1\n{chr1_seq}\n", encoding='utf-8')
 
         provider = SequenceProvider(fasta_file=str(fa))
         assert provider.get_chromosome("chr17").upper() == CHR_SEQ.upper()

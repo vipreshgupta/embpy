@@ -40,9 +40,9 @@ def _base_output(hidden_dim: int, seq_len: int = 20) -> MagicMock:
 
 def _tok(seq_len: int = 20, has_mask: bool = True) -> MagicMock:
     """Return a mock tokeniser that returns fixed-size tensors."""
-    enc: dict = {"input_ids": torch.ones(1, seq_len, dtype=torch.long)}
+    enc: dict = {"input_ids": [1]*seq_len}
     if has_mask:
-        enc["attention_mask"] = torch.ones(1, seq_len, dtype=torch.long)
+        enc["attention_mask"] = [1]*seq_len
     mock = MagicMock()
     mock.return_value = enc
     return mock
@@ -1002,7 +1002,7 @@ class TestNucleotideTransformerWrapper:
         mask = torch.tensor([[1, 1, 1, 1, 0, 0]], dtype=torch.long)
         tok = MagicMock()
         tok.return_value = {
-            "input_ids": torch.ones(1, seq_len, dtype=torch.long),
+            "input_ids": [1]*seq_len,
             "attention_mask": mask,
         }
         w.tokenizer = tok

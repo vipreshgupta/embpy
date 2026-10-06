@@ -1191,7 +1191,7 @@ class StackWrapper(SingleCellWrapper):
         mask_rate: float = 1.0,
         num_steps: int | None = 5,
         mode: str = "mdm",
-        num_workers: int = 4,
+        num_workers: int | None = None,
         random_seed: int | None = None,
         show_progress: bool = False,
         **kwargs: Any,

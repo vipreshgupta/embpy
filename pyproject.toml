@@ -340,7 +340,6 @@ line-length = 120
 src = [ "src" ]
 extend-include = [ "*.ipynb" ]
 
-format.docstring-code-format = true
 
 lint.select = [
   "B",      # flake8-bugbear
@@ -399,3 +398,5 @@ skip = [
   "docs/references.md",
   "docs/notebooks/example.ipynb",
 ]
+[tool.ruff.format]
+docstring-code-format = true

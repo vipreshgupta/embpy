@@ -118,7 +118,7 @@ class AliasCache:
             self._loaded = True
             return
         try:
-            raw = json.loads(self.path.read_text())
+            raw = json.loads(self.path.read_text(encoding='utf-8'))
             if not isinstance(raw, dict):
                 raise ValueError("cache root is not a dict")
             if int(raw.get("version", 0)) != int(self.version):
@@ -185,7 +185,7 @@ class AliasCache:
                 "entries": self._data,
             }
             tmp = self.path.with_suffix(self.path.suffix + ".tmp")
-            tmp.write_text(json.dumps(payload, indent=2, sort_keys=True))
+            tmp.write_text(json.dumps(payload, indent=2, sort_keys=True, encoding='utf-8'))
             os.replace(tmp, self.path)
 
 

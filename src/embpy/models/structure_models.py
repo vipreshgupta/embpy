@@ -163,7 +163,7 @@ class Boltz2Wrapper(BaseModelWrapper):
         with tempfile.TemporaryDirectory() as tmpdir:
             tmpdir = Path(tmpdir)
             yaml_path = tmpdir / "input.yaml"
-            yaml_path.write_text(yaml_content)
+            yaml_path.write_text(yaml_content, encoding='utf-8')
 
             try:
                 from boltz.main import process_inputs
