@@ -1,5 +1,7 @@
 # Architecture
 
+![embpy architecture](embpy_architecture.svg)
+
 `embpy` relies on a highly modular architecture that isolates heavy dependencies, ensuring that the core package remains lightweight and accessible.
 
 ## The Embedder Protocol

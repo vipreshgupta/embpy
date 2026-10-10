@@ -1,5 +1,7 @@
 # embpy: Universal Biological Embeddings
 
+![embpy architecture](embpy_architecture.svg)
+
 **`embpy`** is a unified Python package for creating, managing, and comparing multi-modal biological embeddings. It provides a standard interface to over 100 state-of-the-art embedding models across proteins, genes, cells, molecules, and natural language.
 
 ## Core Capabilities
