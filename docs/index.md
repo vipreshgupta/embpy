@@ -1,42 +1,12 @@
-```{include} ../README.md
+# embpy: Universal Biological Embeddings
 
-```
+**`embpy`** is a unified Python package for creating, managing, and comparing multi-modal biological embeddings. It provides a standard interface to over 100 state-of-the-art embedding models across proteins, genes, cells, molecules, and natural language.
 
-```{toctree}
-:hidden: true
-:maxdepth: 1
-:caption: Documentation
+## Core Capabilities
 
-api.md
-technical.md
-attention_extraction.md
-static_embeddings.md
-changelog.md
-contributing.md
-references.md
-```
+- **Universal Interface:** A single `BioEmbedder` class replacing dozens of separate model pipelines.
+- **Multi-Modal Support:** Embed proteins (ESM, ProtT5), molecules (ChemBERTa, MolFormer), DNA (Evo, Borzoi), and cells (scGPT, Geneformer).
+- **Cross-Platform:** First-class support for Linux, macOS (Apple Silicon), and Windows natively.
+- **Hardware Agnostic:** Seamlessly scales from a local CPU to multi-node H100 clusters. 
 
-```{toctree}
-:hidden: true
-:maxdepth: 1
-:caption: Get started
-
-notebooks/01_embed_any_model
-notebooks/02_output_contract
-notebooks/03_compare_embeddings
-notebooks/04_benchmark_models
-notebooks/05_annotate_entities
-notebooks/06_attention_weights
-```
-
-```{toctree}
-:hidden: true
-:maxdepth: 1
-:caption: By modality
-
-notebooks/genes
-notebooks/proteins
-notebooks/small_molecules
-notebooks/cells
-notebooks/variant_effects
-```
+Get started by checking out the [Installation Guide](getting-started.md).

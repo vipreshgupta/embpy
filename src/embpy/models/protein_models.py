@@ -235,8 +235,8 @@ class ESM2Wrapper(BaseModelWrapper):
         target_layer
             If specified, extract embeddings from a particular hidden
             state layer instead of the default ``last_hidden_state``.
-        batch_size
-            Optional override; otherwise picked from ``_default_batch_size()``.
+        **kwargs : Any
+            Additional arguments, including ``batch_size`` (optional override; otherwise picked from ``_default_batch_size()``).
 
         Returns
         -------

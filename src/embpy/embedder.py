@@ -828,6 +828,8 @@ class BioEmbedder:
             to structure/morphology work). ``"other"`` clears only the
             non-single-cell cache.
 
+        Notes
+        -----
         After dropping references, runs ``gc.collect()`` +
         ``torch.cuda.empty_cache()`` so the allocator actually releases
         the GPU memory back to the system.
