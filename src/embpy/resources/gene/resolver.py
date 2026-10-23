@@ -294,7 +294,7 @@ def _is_ensembl_id(s: str) -> bool:
     Covers human (ENSG), mouse (ENSMUSG), zebrafish (ENSDARG),
     rat (ENSRNOG), fly (FBgn), and other Ensembl-style identifiers.
     """
-    return bool(re.match(r"^ENS[A-Z]*[GTRPE]\d{11}(\.\d+)?$", s, re.IGNORECASE))
+    return bool(re.match(r"^ENS[A-Z]*\d+(\.\d+)?$", s, re.IGNORECASE))
 
 
 def detect_identifier_type(
@@ -436,11 +436,21 @@ class GeneResolver:
                     for k, v in data.get("symbols", {}).items():
                         parts = k.split(":", 1)
                         if len(parts) == 2:
-                            self._symbol_cache[(parts[0], parts[1])] = v
+                            org_part, sym_part = parts[0], parts[1]
+                            if v and v != sym_part and _is_ensembl_id(v):
+                                self._symbol_cache[(org_part, sym_part)] = v
                     for k, v in data.get("ensembl", {}).items():
                         parts = k.split(":", 1)
                         if len(parts) == 2:
-                            self._ensembl_cache[(parts[0], parts[1])] = v
+                            org_part, ens_part = parts[0], parts[1]
+                            if _is_ensembl_id(ens_part):
+                                # Clean / sanitize any legacy lowercase entries in reverse cache
+                                if isinstance(v, str):
+                                    if org_part in {"human", "homo_sapiens"} and v.islower():
+                                        v = v.upper()
+                                    elif org_part in {"mouse", "mus_musculus"} and v.islower():
+                                        v = v.capitalize()
+                                self._ensembl_cache[(org_part, ens_part)] = v
             except Exception as e:
                 logging.debug("Could not load gene cache: %s", e)
 
@@ -1121,6 +1131,7 @@ class GeneResolver:
             return self._symbol_cache[(org, sym)]
 
         resolved_id: str | None = None
+        official_sym: str | None = None
         network_failed = False
         fail_reason = "lookup timed out"
 
@@ -1132,10 +1143,15 @@ class GeneResolver:
                     genes = self.ensembl.genes_by_name(sym.upper())
                 if genes:
                     resolved_id = genes[0].gene_id
+                    official_sym = getattr(genes[0], "gene_name", None) or getattr(genes[0], "name", None)
             except Exception as e:  # noqa: BLE001
                 logging.debug(f"pyensembl failed for {sym}: {e}")
 
         # 2) MyGene.info (good with synonyms)
+        # TODO(pre-existing): MyGene fallback uses free-text search and accepts the first hit,
+        # which can return incorrect genes for short symbols (e.g. 'P53' returns 'PURPL'
+        # instead of 'TP53'). Tracked for a separate PR: must use specific symbol/alias queries
+        # (e.g. 'symbol:P53' or 'alias:P53') and verify returned gene name and species before accepting.
         if not resolved_id:
             try:
                 resp = requests.get(
@@ -1144,7 +1160,7 @@ class GeneResolver:
                         "q": sym,
                         "scopes": "symbol,alias,name",
                         "species": organism,
-                        "fields": "ensembl.gene",
+                        "fields": "symbol,ensembl.gene",
                         "size": 1,
                     },
                     timeout=10,
@@ -1152,13 +1168,16 @@ class GeneResolver:
                 if resp.ok:
                     hits = resp.json().get("hits", [])
                     if hits:
+                        hit_symbol = hits[0].get("symbol")
                         ens = hits[0].get("ensembl", {})
                         if isinstance(ens, dict) and "gene" in ens:
                             resolved_id = ens["gene"]
+                            official_sym = hit_symbol
                         elif isinstance(ens, list) and ens:
                             for item in ens:
                                 if "gene" in item:
                                     resolved_id = item["gene"]
+                                    official_sym = hit_symbol
                                     break
             except (requests.ConnectionError, requests.Timeout) as e:
                 logging.debug(f"MyGene.info network error for {sym}: {e}")
@@ -1172,7 +1191,9 @@ class GeneResolver:
             try:
                 r = _ensembl_get(url, headers={"Content-Type": "application/json"}, timeout=10)
                 if r.ok:
-                    resolved_id = r.json().get("id")
+                    data = r.json()
+                    resolved_id = data.get("id")
+                    official_sym = data.get("display_name")
                 elif r.status_code in _ENSEMBL_RETRY_STATUSES:
                     network_failed = True
                     fail_reason = f"returned HTTP {r.status_code}"
@@ -1184,8 +1205,15 @@ class GeneResolver:
                 logging.debug(f"Ensembl REST symbol->id failed for {sym}: {e}")
 
         if resolved_id:
+            if not official_sym:
+                if org in ("human", "homo_sapiens"):
+                    official_sym = sym.upper()
+                elif org in ("mouse", "mus_musculus"):
+                    official_sym = sym.capitalize()
+                else:
+                    official_sym = sym
             self._symbol_cache[(org, sym)] = resolved_id
-            self._ensembl_cache[(org, resolved_id)] = sym
+            self._ensembl_cache[(org, resolved_id)] = official_sym
             self._save_cache()
             return resolved_id
 
@@ -1284,9 +1312,10 @@ class GeneResolver:
                 logging.debug(f"Ensembl REST id->symbol failed for {ens}: {e}")
 
         if resolved_sym:
-            self._ensembl_cache[(org, ens)] = resolved_sym
-            self._symbol_cache[(org, resolved_sym)] = ens
-            self._save_cache()
+            if _is_ensembl_id(ens):
+                self._ensembl_cache[(org, ens)] = resolved_sym
+                self._symbol_cache[(org, resolved_sym)] = ens
+                self._save_cache()
             return resolved_sym
 
         if network_failed:
@@ -1386,9 +1415,12 @@ class GeneResolver:
                         genes = self.ensembl.genes_by_name(sym.upper())
                     if genes:
                         ens_id = genes[0].gene_id
+                        official_sym = getattr(genes[0], "gene_name", None) or getattr(genes[0], "name", None)
+                        if not official_sym:
+                            official_sym = sym.upper() if org in ("human", "homo_sapiens") else (sym.capitalize() if org in ("mouse", "mus_musculus") else sym)
                         result[s] = ens_id
                         self._symbol_cache[(org, sym)] = ens_id
-                        self._ensembl_cache[(org, ens_id)] = sym
+                        self._ensembl_cache[(org, ens_id)] = official_sym
                     else:
                         unresolved_after_pyensembl.append(s)
                 except Exception as e:
@@ -1423,9 +1455,12 @@ class GeneResolver:
                                 val = data.get(sym)
                                 if isinstance(val, dict) and "id" in val:
                                     ens_id = val["id"]
+                                    official_sym = val.get("display_name")
+                                    if not official_sym:
+                                        official_sym = sym.upper() if org in ("human", "homo_sapiens") else (sym.capitalize() if org in ("mouse", "mus_musculus") else sym)
                                     result[orig] = ens_id
                                     self._symbol_cache[(org, sym)] = ens_id
-                                    self._ensembl_cache[(org, ens_id)] = sym
+                                    self._ensembl_cache[(org, ens_id)] = official_sym
                                 else:
                                     still_unresolved.append(orig)
                         else:

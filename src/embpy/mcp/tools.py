@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import contextlib
 import importlib.util
+import json
 import logging
 import math
 import os
@@ -55,6 +56,28 @@ def _sanitize_val(val: Any) -> Any:
     if isinstance(val, (list, tuple, set)):
         return [_sanitize_val(x) for x in val]
     return val
+
+
+def _sanitize_for_h5ad(val: Any) -> Any:
+    """Recursively sanitize metadata containers so H5AD/h5py can serialize them safely."""
+    if isinstance(val, dict):
+        return {str(k): _sanitize_for_h5ad(v) for k, v in val.items()}
+    elif isinstance(val, (list, tuple)):
+        if any(isinstance(x, (dict, list, tuple)) for x in val):
+            return json.dumps(val)
+        return list(val)
+    return val
+
+
+def _save_anndata_safely(adata: Any, path: str) -> None:
+    """Safely write an AnnData object to an .h5ad file, ensuring directories and HDF5 data types are valid."""
+    target_dir = os.path.dirname(os.path.abspath(path))
+    if target_dir:
+        os.makedirs(target_dir, exist_ok=True)
+    if getattr(adata, "uns", None):
+        for k in list(adata.uns.keys()):
+            adata.uns[k] = _sanitize_for_h5ad(adata.uns[k])
+    adata.write_h5ad(path)
 
 
 def _detect_expression_nature(adata: Any) -> dict[str, Any]:
@@ -271,9 +294,12 @@ def resolve_identifiers(
     target_id_type: str = "auto",
     target_type: str | None = None,
     organism: str = "human",
+    column: str | None = None,
+    obs_column: str | None = None,
     var_column: str | None = None,
     update_h5ad_path: str | None = None,
-    **kwargs: Any,
+    output_path: str | None = None,
+    strict: bool = False,
 ) -> dict[str, Any]:
     """Map entity identifiers (e.g. Ensembl to HGNC, molecule names to SMILES).
 
@@ -294,12 +320,22 @@ def resolve_identifiers(
         Source format ('ensembl', 'symbol', 'name', 'uniprot').
     target_id_type : str, default='auto'
         Target format ('ensembl', 'symbol', 'smiles').
+    target_type : str, optional
+        Alias for target_id_type.
     organism : str, default='human'
         Target species ('human', 'mouse').
+    column : str, optional
+        Identifier column in adata.obs or adata.var.
+    obs_column : str, optional
+        Column in adata.obs containing identifiers (e.g. 'smiles').
     var_column : str, optional
-        Column in adata.var containing identifiers.
+        Column in adata.var containing identifiers (e.g. 'symbol').
     update_h5ad_path : str, optional
-        If provided, writes the updated AnnData with mapped IDs added into adata.var.
+        If provided, writes the updated AnnData with mapped IDs added into adata.var or adata.obs.
+    output_path : str, optional
+        Alias for update_h5ad_path.
+    strict : bool, default=False
+        If True, raises error on unresolved identifiers.
 
     Returns
     -------
@@ -316,6 +352,10 @@ def resolve_identifiers(
     try:
         input_items: list[str] = []
         adata = None
+        source_series = None
+        source_target = "var"
+        mapped_col_name = None
+        out_path = update_h5ad_path or output_path
 
         if path:
             resolved_path = os.path.abspath(path)
@@ -326,12 +366,56 @@ def resolve_identifiers(
                     "error": f"Dataset file not found: {path}",
                 }
             import anndata
+            import pandas as pd
 
             adata = anndata.read_h5ad(resolved_path)
-            if var_column and var_column in adata.var:
-                input_items = [str(x) for x in adata.var[var_column].dropna()]
+
+            if obs_column:
+                if obs_column not in adata.obs:
+                    return {
+                        "status": "error",
+                        "error_type": "KeyError",
+                        "error": f"obs_column '{obs_column}' not found in adata.obs. Available: {list(adata.obs.columns)}",
+                    }
+                source_series = adata.obs[obs_column]
+                source_target = "obs"
+                mapped_col_name = f"{obs_column}_mapped"
+            elif var_column:
+                if var_column not in adata.var:
+                    return {
+                        "status": "error",
+                        "error_type": "KeyError",
+                        "error": f"var_column '{var_column}' not found in adata.var. Available: {list(adata.var.columns)}",
+                    }
+                source_series = adata.var[var_column]
+                source_target = "var"
+                mapped_col_name = f"{var_column}_mapped"
+            elif column:
+                if column in adata.obs:
+                    source_series = adata.obs[column]
+                    source_target = "obs"
+                    mapped_col_name = f"{column}_mapped"
+                elif column in adata.var:
+                    source_series = adata.var[column]
+                    source_target = "var"
+                    mapped_col_name = f"{column}_mapped"
+                else:
+                    return {
+                        "status": "error",
+                        "error_type": "KeyError",
+                        "error": f"column '{column}' not found in adata.obs or adata.var.",
+                    }
             else:
-                input_items = [str(x) for x in adata.var_names]
+                if entity_type == "molecule" and "smiles" in adata.obs:
+                    source_series = adata.obs["smiles"]
+                    source_target = "obs"
+                    mapped_col_name = "smiles_mapped"
+                else:
+                    source_series = pd.Series(list(adata.var_names), index=adata.var_names)
+                    source_target = "var"
+                    mapped_col_name = "gene_mapped_id"
+
+            input_items = [str(x) for x in source_series if pd.notna(x) and str(x).strip()]
         elif identifiers is not None:
             if isinstance(identifiers, str):
                 input_items = [s.strip() for s in identifiers.split(",") if s.strip()]
@@ -354,86 +438,159 @@ def resolve_identifiers(
                 "error": "No identifiers provided for resolution.",
             }
 
-        # Resolve entity_type if auto
+        # Check Ensembl pattern across inputs:
+        # Matches human (ENSG...), mouse (ENSMUSG...), zebrafish (ENSDARG...), etc., and versioned IDs (.1)
+        import re
+        _ensembl_pattern = re.compile(r"^ENS[A-Z]*\d+(\.\d+)?$", re.IGNORECASE)
+        has_ensembl_ids = any(_ensembl_pattern.match(s.strip()) for s in input_items if s.strip())
+        has_mouse_ensembl = any(s.strip().upper().startswith("ENSMUS") for s in input_items if s.strip())
+
+        # If mouse Ensembl IDs detected and organism is still the default 'human', switch to 'mouse'
+        if has_mouse_ensembl and organism.lower() in ("human", "homo_sapiens"):
+            organism = "mouse"
+
         if entity_type == "auto":
-            sample_peek = input_items[:5]
-            if any(s.startswith("ENSG") or s.startswith("ENSMUSG") for s in sample_peek):
-                resolved_entity = "gene"
-            elif any(s.lower() in ("aspirin", "imatinib", "metformin", "dexamethasone") for s in sample_peek):
+            sample_peek = input_items[:10]
+            if all(s.lower() in ("aspirin", "imatinib", "metformin", "dexamethasone") for s in sample_peek):
                 resolved_entity = "molecule"
+            elif any(s.lower() in ("aspirin", "imatinib", "metformin", "dexamethasone") for s in sample_peek):
+                resolved_entity = "mixed"
             else:
                 resolved_entity = "gene"
         else:
             resolved_entity = entity_type
 
+        # Conversion target determination & validation
+        chosen_tgt = target_type if target_type is not None else target_id_type
+        if chosen_tgt == "auto":
+            tgt = "symbol" if has_ensembl_ids else "ensembl"
+        else:
+            tgt = chosen_tgt.lower()
+            if tgt in ("ensembl", "ensg") and has_ensembl_ids:
+                logger.info("Identifiers already appear to be Ensembl IDs; requested conversion to ensembl.")
+            elif tgt in ("symbol", "hgnc") and not has_ensembl_ids:
+                logger.info("Identifiers already appear to be symbols; requested conversion to symbol.")
+
         mapping: dict[str, str] = {}
         unmapped: list[str] = []
         diag: dict[str, Any] = {}
+        unique_items = list(dict.fromkeys(input_items))
 
-        if resolved_entity == "gene":
-            from embpy.resources.gene.resolver import GeneResolver
+        drug_dict = {
+            "aspirin": "CC(=O)Oc1ccccc1C(=O)O",
+            "imatinib": "Cc1ccc(NC(=O)c2ccc(CN3CCN(C)CC3)cc2)cc1Nc1nccc(-c2cccnc2)n1",
+            "metformin": "CN(C)C(=N)NC(=N)N",
+            "dexamethasone": "CC12C(O)CC3(C)C(CCC4CC(=O)C=CC43C)C1(F)CCC2(O)C(=O)CO",
+        }
 
-            with contextlib.redirect_stdout(sys.stderr):
-                resolver = GeneResolver(species=organism)
-                chosen_tgt = target_type if target_type is not None else target_id_type
-                tgt = chosen_tgt if chosen_tgt != "auto" else ("symbol" if any(s.startswith("ENSG") for s in input_items[:5]) else "ensembl")
-                if tgt in ("ensembl", "ensg"):
-                    mapped_dict, diag = resolver.symbols_to_ensembl_batch(
-                        input_items, organism=organism, return_diagnostics=True
-                    )
+        # Partition items if entity_type is 'auto' or handle dedicated entity types
+        mol_items: list[str] = []
+        gene_items: list[str] = []
+        if resolved_entity == "molecule":
+            mol_items = unique_items
+        elif resolved_entity in ("auto", "mixed"):
+            for item in unique_items:
+                if item.lower() in drug_dict:
+                    mol_items.append(item)
                 else:
-                    mapped_dict, diag = resolver.ensembl_to_symbols_batch(
-                        input_items, organism=organism, return_diagnostics=True
-                    )
+                    gene_items.append(item)
+        else:
+            gene_items = unique_items
 
-            for item in input_items:
-                res = mapped_dict.get(item)
-                if res and not str(res).startswith("ENSG00000000000") and str(res).strip():
-                    mapping[item] = str(res)
-                else:
-                    unmapped.append(item)
-
-        elif resolved_entity == "molecule":
-            # Map compound names to SMILES
+        if mol_items:
             try:
                 import cirpy
-                for item in input_items:
-                    smiles = cirpy.resolve(item, "smiles")
-                    if smiles:
-                        mapping[item] = str(smiles)
+                for item in mol_items:
+                    s = drug_dict.get(item.lower()) or cirpy.resolve(item, "smiles")
+                    if s:
+                        mapping[item] = str(s)
                     else:
                         unmapped.append(item)
             except Exception:
-                # Local fallback dictionary for common drug names
-                drug_dict = {
-                    "aspirin": "CC(=O)Oc1ccccc1C(=O)O",
-                    "imatinib": "Cc1ccc(NC(=O)c2ccc(CN3CCN(C)CC3)cc2)cc1Nc1nccc(-c2cccnc2)n1",
-                    "metformin": "CN(C)C(=N)NC(=N)N",
-                    "dexamethasone": "CC12C(O)CC3(C)C(CCC4CC(=O)C=CC43C)C1(F)CCC2(O)C(=O)CO",
-                }
-                for item in input_items:
+                for item in mol_items:
                     s = drug_dict.get(item.lower())
                     if s:
                         mapping[item] = s
                     else:
                         unmapped.append(item)
 
-        else:
-            # Default identity mapping
-            mapping = {x: x for x in input_items}
+        if gene_items:
+            from embpy.resources.gene.resolver import GeneResolver
 
-        mapped_count = len(mapping)
+            # Detect mouse symbols (e.g. Trp53) or mouse Ensembl IDs (e.g. ENSMUSG...)
+            mouse_symbols = [
+                s for s in gene_items
+                if len(s) > 1 and s[0].isupper() and s[1:].islower() and not _ensembl_pattern.match(s)
+            ]
+            mouse_ensembl = [s for s in gene_items if s.upper().startswith("ENSMUS")]
+
+            if (mouse_symbols or mouse_ensembl) and organism.lower() in ("human", "homo_sapiens"):
+                mouse_batch = list(dict.fromkeys(mouse_symbols + mouse_ensembl))
+                std_batch = [s for s in gene_items if s not in mouse_batch]
+            else:
+                mouse_batch = []
+                std_batch = gene_items
+
+            with contextlib.redirect_stdout(sys.stderr):
+                if std_batch:
+                    resolver = GeneResolver(species=organism)
+                    if tgt in ("ensembl", "ensg"):
+                        mapped_dict, diag = resolver.symbols_to_ensembl_batch(
+                            std_batch, organism=organism, return_diagnostics=True, strict=strict
+                        )
+                    else:
+                        mapped_dict, diag = resolver.ensembl_to_symbols_batch(
+                            std_batch, organism=organism, return_diagnostics=True, strict=strict
+                        )
+                    for item in std_batch:
+                        res = mapped_dict.get(item)
+                        if res and not str(res).startswith("ENSG00000000000") and str(res).strip():
+                            mapping[item] = str(res)
+                        else:
+                            unmapped.append(item)
+
+                if mouse_batch:
+                    mouse_resolver = GeneResolver(species="mouse")
+                    if tgt in ("ensembl", "ensg"):
+                        m_mapped, m_diag = mouse_resolver.symbols_to_ensembl_batch(
+                            mouse_batch, organism="mouse", return_diagnostics=True, strict=strict
+                        )
+                    else:
+                        m_mapped, m_diag = mouse_resolver.ensembl_to_symbols_batch(
+                            mouse_batch, organism="mouse", return_diagnostics=True, strict=strict
+                        )
+                    for item in mouse_batch:
+                        res = m_mapped.get(item)
+                        if res and not str(res).startswith("ENSG00000000000") and str(res).strip():
+                            mapping[item] = str(res)
+                        else:
+                            unmapped.append(item)
+
+        mapped_count = sum(1 for item in input_items if item in mapping)
         rate = round((mapped_count / total_submitted) * 100.0, 2) if total_submitted > 0 else 0.0
 
         sample_mapping = {k: mapping[k] for k in list(mapping.keys())[:5]}
 
         saved_path: str | None = None
-        if update_h5ad_path and adata is not None:
-            saved_path = os.path.abspath(update_h5ad_path)
-            col_name = f"{resolved_entity}_mapped_id"
-            adata.var[col_name] = [mapping.get(str(g), None) for g in adata.var_names]
-            os.makedirs(os.path.dirname(saved_path) or ".", exist_ok=True)
-            adata.write_h5ad(saved_path)
+        if out_path and adata is not None and source_series is not None:
+            import pandas as pd
+
+            saved_path = os.path.abspath(out_path)
+            col_target_name = mapped_col_name or f"{resolved_entity}_mapped_id"
+
+            # Map back over the EXACT source series element-by-element
+            # Preserves original row order, duplicate names, and missing/NaN values
+            aligned_values = [
+                mapping.get(str(x)) if (pd.notna(x) and str(x) in mapping) else None
+                for x in source_series
+            ]
+
+            if source_target == "obs":
+                adata.obs[col_target_name] = aligned_values
+            else:
+                adata.var[col_target_name] = aligned_values
+
+            _save_anndata_safely(adata, saved_path)
 
         is_partial = (
             diag.get("status") == "partial_success"
@@ -447,12 +604,12 @@ def resolve_identifiers(
         result_payload: dict[str, Any] = {
             "status": "partial_success" if is_partial else "success",
             "entity_type": resolved_entity,
-            "target_id_type": target_id_type,
+            "target_id_type": tgt,
             "total_submitted": total_submitted,
             "total_genes": total_submitted,
             "mapped_count": mapped_count,
-            "unmapped_count": len(unmapped),
-            "unresolved_count": len(unmapped),
+            "unmapped_count": total_submitted - mapped_count,
+            "unresolved_count": total_submitted - mapped_count,
             "mapping_success_rate": rate,
             "mapping_rate": rate,
             "sample_mapping": sample_mapping,
@@ -511,12 +668,13 @@ def preprocess_counts(
     select_hvg: bool = True,
     log_transform: bool = True,
     scale: bool = False,
+    auto_adjust: bool = False,
 ) -> dict[str, Any]:
     """Preprocess single-cell AnnData counts and save the preprocessed object to disk.
 
     Applies standard single-cell quality control, library size normalization (sc.pp.normalize_total),
-    log1p transformation (sc.pp.log1p), and highly variable gene (HVG) selection. Preserves raw
-    counts in .layers['counts'] and standardized expression in .layers['log_normalized'].
+    log1p transformation (sc.pp.log1p), highly variable gene (HVG) selection, and optional scaling.
+    Preserves raw counts in .layers['counts'] and standardized expression in .layers['log_normalized'].
 
     Token-Saving: Does not return expression matrices to the agent; writes preprocessed
     dataset to disk and returns compact summary statistics.
@@ -528,9 +686,9 @@ def preprocess_counts(
     output_path : str, optional
         Filesystem destination to write the preprocessed .h5ad dataset.
     min_genes : int, default=200
-        Minimum genes expressed per cell (dynamically adjusted for smaller test subsets).
+        Minimum genes expressed per cell. Strictly enforced unless auto_adjust=True.
     min_cells : int, default=3
-        Minimum cells expressing a gene.
+        Minimum cells expressing a gene. Strictly enforced unless auto_adjust=True.
     target_sum : float, default=1e4
         Target total counts per cell for normalization.
     n_top_genes : int, default=2000
@@ -540,7 +698,9 @@ def preprocess_counts(
     log_transform : bool, default=True
         Whether to log1p transform counts.
     scale : bool, default=False
-        Whether to scale expression to unit variance.
+        Whether to scale expression to unit variance (stored in .layers['scaled']).
+    auto_adjust : bool, default=False
+        If True, automatically lowers thresholds for small tutorial/test datasets.
 
     Returns
     -------
@@ -552,7 +712,7 @@ def preprocess_counts(
         - n_cells: Final cell count after QC
         - n_genes: Total gene count
         - n_hvg: Number of highly variable genes marked
-        - layers: Available layers (e.g. ['counts', 'log_normalized'])
+        - layers: Available layers (e.g. ['counts', 'log_normalized', 'scaled'])
         - summary: Human-readable execution description
     """
     try:
@@ -570,10 +730,22 @@ def preprocess_counts(
 
         adata = anndata.read_h5ad(resolved_path)
 
-        # Dynamic adjustment for small/tutorial datasets so cells are not accidentally all removed
-        effective_min_genes = min(min_genes, max(1, adata.n_vars // 3)) if adata.n_vars < 500 else min_genes
-        effective_min_cells = min(min_cells, max(1, adata.n_obs // 4)) if adata.n_obs < 100 else min_cells
-        effective_n_hvg = min(n_top_genes, max(10, adata.n_vars - 1)) if adata.n_vars < 2000 else n_top_genes
+        adjustments_applied: dict[str, Any] = {}
+        if auto_adjust:
+            # Dynamic adjustment for small/tutorial datasets so cells are not accidentally all removed
+            effective_min_genes = min(min_genes, max(1, adata.n_vars // 3)) if adata.n_vars < 500 else min_genes
+            effective_min_cells = min(min_cells, max(1, adata.n_obs // 4)) if adata.n_obs < 100 else min_cells
+            effective_n_hvg = min(n_top_genes, max(10, adata.n_vars - 1)) if adata.n_vars < 2000 else n_top_genes
+            if effective_min_genes != min_genes:
+                adjustments_applied["min_genes"] = f"Adjusted from {min_genes} to {effective_min_genes}"
+            if effective_min_cells != min_cells:
+                adjustments_applied["min_cells"] = f"Adjusted from {min_cells} to {effective_min_cells}"
+            if effective_n_hvg != n_top_genes:
+                adjustments_applied["n_top_genes"] = f"Adjusted from {n_top_genes} to {effective_n_hvg}"
+        else:
+            effective_min_genes = min_genes
+            effective_min_cells = min_cells
+            effective_n_hvg = min(n_top_genes, adata.n_vars)
 
         with contextlib.redirect_stdout(sys.stderr):
             # Store raw counts in layers
@@ -581,30 +753,36 @@ def preprocess_counts(
                 adata.layers["counts"] = adata.X.copy()
 
             # QC Filtering
-            if effective_min_genes > 0:
+            if effective_min_genes > 0 and adata.n_obs > 0:
                 sc.pp.filter_cells(adata, min_genes=effective_min_genes)
-            if effective_min_cells > 0:
+            if effective_min_cells > 0 and adata.n_vars > 0:
                 sc.pp.filter_genes(adata, min_cells=effective_min_cells)
 
             # Normalization & Log1p
-            if target_sum:
+            if target_sum and adata.n_obs > 0 and adata.n_vars > 0:
                 sc.pp.normalize_total(adata, target_sum=target_sum)
-            if log_transform:
+            if log_transform and adata.n_obs > 0 and adata.n_vars > 0:
                 sc.pp.log1p(adata)
 
             # Store log-normalized representation in layers
-            adata.layers["log_normalized"] = adata.X.copy()
+            if adata.n_obs > 0 and adata.n_vars > 0:
+                adata.layers["log_normalized"] = adata.X.copy()
+
+            # Scale if requested
+            if scale and adata.n_obs > 0 and adata.n_vars > 0:
+                sc.pp.scale(adata, max_value=10)
+                adata.layers["scaled"] = adata.X.copy()
 
             # HVG Selection
-            if select_hvg and adata.n_vars > 2:
+            if select_hvg and adata.n_vars > 2 and adata.n_obs > 0:
                 sc.pp.highly_variable_genes(
                     adata,
-                    n_top_genes=effective_n_hvg,
+                    n_top_genes=min(effective_n_hvg, adata.n_vars),
                     flavor="seurat" if log_transform else "seurat_v3",
                 )
 
             # Restore .X to raw counts to honor embpy output contract
-            if "counts" in adata.layers:
+            if "counts" in adata.layers and adata.n_obs > 0:
                 adata.X = adata.layers["counts"].copy()
 
         # Determine output destination
@@ -614,12 +792,11 @@ def preprocess_counts(
         else:
             saved_path = os.path.abspath(output_path)
 
-        os.makedirs(os.path.dirname(saved_path) or ".", exist_ok=True)
-        adata.write_h5ad(saved_path)
+        _save_anndata_safely(adata, saved_path)
 
         n_hvg_count = int(adata.var["highly_variable"].sum()) if "highly_variable" in adata.var else 0
 
-        return {
+        res_payload = {
             "status": "success",
             "input_path": str(resolved_path),
             "output_path": saved_path,
@@ -634,6 +811,9 @@ def preprocess_counts(
                 f"and selected {n_hvg_count} highly-variable genes."
             ),
         }
+        if adjustments_applied:
+            res_payload["adjustments_applied"] = adjustments_applied
+        return res_payload
 
     except Exception as exc:
         logger.error("preprocess_counts failed: %s", exc, exc_info=True)
@@ -696,15 +876,28 @@ def list_model_registry(entity_type: str | None = None) -> dict[str, Any]:
             "scanpy": {"installed": bool(importlib.util.find_spec("scanpy") is not None)},
         }
 
-        # Curated recommendations by modality
+        # Dynamically inspect embpy's internal model registry
+        from embpy.embedder_registry.flat import MODEL_REGISTRY
+        from embpy.models.singlecell_models import list_singlecell_models
+
+        sc_models = sorted(list_singlecell_models())
+        mol_models = sorted([k for k, v in MODEL_REGISTRY.items() if hasattr(v[0], "model_type") and v[0].model_type == "molecule"])
+        dna_models = sorted([k for k, v in MODEL_REGISTRY.items() if hasattr(v[0], "model_type") and v[0].model_type == "dna"])
+        prot_models = sorted([k for k, v in MODEL_REGISTRY.items() if hasattr(v[0], "model_type") and v[0].model_type == "protein"])
+        morph_models = sorted([k for k, v in MODEL_REGISTRY.items() if hasattr(v[0], "model_type") and v[0].model_type == "morphology"])
+        text_models = sorted([k for k, v in MODEL_REGISTRY.items() if hasattr(v[0], "model_type") and v[0].model_type == "text"])
+
+        # Curated recommendations built dynamically from verified registered names (e.g. molformer_base)
         curated_catalog = {
-            "cell": ["pca", "scvi", "scanvi", "totalvi", "scgpt", "geneformer_v2_12L", "state", "stack"],
-            "gene": ["hyenadna_tiny_1k", "dnabert2", "ntv2_500m", "enformer", "borzoi"],
-            "protein": ["esm2_8M", "esm2_35M", "esm2_150M", "esm2_650M", "protbert"],
-            "molecule": ["chemberta_zinc", "molformer", "morgan_fp", "rdkit_2d", "maccs"],
-            "morphology": ["jump_cp", "densenet_hpa"],
-            "text": ["minilm_l6_v2", "biolinkbert"],
+            "cell": [m for m in ["pca", "scvi", "scanvi", "totalvi", "scgpt", "geneformer_v2_12L", "state", "stack"] if m in sc_models],
+            "gene": [m for m in ["hyenadna_tiny_1k", "dnabert2", "ntv2_500m", "enformer_human_rough", "borzoi_v0"] if m in dna_models] or dna_models[:5],
+            "protein": [m for m in ["esm2_8M", "esm2_35M", "esm2_150M", "esm2_650M", "protbert", "esm1b"] if m in prot_models] or prot_models[:5],
+            "molecule": [m for m in ["chemberta2MTR", "molformer_base", "morgan_fp", "rdkit_fp", "maccs_fp"] if m in mol_models] or mol_models[:5],
+            "morphology": [m for m in ["subcell_mae_rybg", "subcell_vit_rybg", "densenet_hpa"] if m in morph_models] or morph_models[:5],
+            "text": [m for m in ["minilm_l6_v2", "bert_base_uncased", "llama3.2_1b"] if m in text_models] or text_models[:5],
         }
+
+        total_models = len(set(sc_models + list(MODEL_REGISTRY.keys())))
 
         runnable_sc: list[str] = ["pca"]
         if importlib.util.find_spec("scvi") is not None:
@@ -718,17 +911,25 @@ def list_model_registry(entity_type: str | None = None) -> dict[str, Any]:
 
         return {
             "status": "success",
-            "total_models_available": 150,
-            "total_models": 150,
+            "total_models_available": total_models,
+            "total_models": total_models,
             "supported_entities": list(curated_catalog.keys()),
             "compute_device": device_str,
             "device": device_str,
             "hardware_device": device_str,
             "device_details": device_name,
             "recommended_models": filtered_catalog,
+            "available_models": {
+                "cell": sc_models,
+                "gene": dna_models,
+                "protein": prot_models,
+                "molecule": mol_models,
+                "morphology": morph_models,
+                "text": text_models,
+            },
             "runnable_models": runnable_sc,
             "runnable_singlecell_models": runnable_sc,
-            "all_singlecell_models": curated_catalog["cell"],
+            "all_singlecell_models": sc_models,
             "optional_extras_status": extras,
         }
 
@@ -855,10 +1056,12 @@ def compute_embeddings(
         else:
             saved_path = os.path.abspath(output_path)
 
-        os.makedirs(os.path.dirname(saved_path) or ".", exist_ok=True)
-        adata_out.write_h5ad(saved_path)
+        _save_anndata_safely(adata_out, saved_path)
 
         shapes = {str(k): [int(dim) for dim in adata_out.obsm[k].shape] for k in adata_out.obsm.keys()}
+        for k in adata_out.varm.keys():
+            shapes[str(k)] = [int(dim) for dim in adata_out.varm[k].shape]
+        all_keys = list(adata_out.obsm.keys()) + list(adata_out.varm.keys())
 
         return {
             "status": "success",
@@ -867,7 +1070,7 @@ def compute_embeddings(
             "entity_type": entity_type,
             "n_cells": int(adata_out.n_obs),
             "models_computed": [str(m) for m in model_list],
-            "embedding_keys": [str(k) for k in adata_out.obsm.keys()],
+            "embedding_keys": [str(k) for k in all_keys],
             "embedding_shapes": shapes,
             "execution_time_seconds": round(time.time() - t0, 3),
         }
@@ -912,9 +1115,10 @@ def annotate_metadata(
     entity_type: Literal["auto", "gene", "protein", "molecule", "cell_line"] = "auto",
     annotation_type: str = "pathway",
     column: str | None = None,
+    obs_column: str | None = None,
     sources: list[str] | str | None = None,
     output_path: str | None = None,
-    **kwargs: Any,
+    organism: str = "human",
 ) -> dict[str, Any]:
     """Enrich an AnnData dataset with external biological metadata (GO terms, pathways, diseases).
 
@@ -929,20 +1133,28 @@ def annotate_metadata(
         Filesystem path to the target .h5ad dataset.
     entity_type : {'auto', 'gene', 'protein', 'molecule', 'cell_line'}, default='auto'
         Entity type represented in the dataset.
+    annotation_type : str, default='pathway'
+        Type of biological annotation.
     column : str, optional
         Column in adata.obs holding entity identifiers (or None to check obs_names/var_names).
+    obs_column : str, optional
+        Alias for column.
     sources : list[str] or str, optional
         Data sources to query (defaults to "all" or standard sources).
     output_path : str, optional
         Filesystem destination to write the annotated dataset.
+    organism : str, default='human'
+        Target species ('human', 'mouse').
 
     Returns
     -------
     dict[str, Any]
         Annotation execution summary:
-        - status: "success" or "error"
+        - status: "success", "partial_success", or "error"
         - output_path: Destination path
         - entity_type: Resolved modality
+        - successful_count: Number of successfully annotated entities
+        - failed_count: Number of failed entities
         - new_columns_added: List of newly populated observation columns
         - summary: Human-readable description
     """
@@ -975,7 +1187,7 @@ def annotate_metadata(
         else:
             resolved_entity = entity_type
 
-        query_col = column
+        query_col = obs_column or column
         if not query_col:
             # Pick best matching column
             if resolved_entity == "molecule":
@@ -991,6 +1203,13 @@ def annotate_metadata(
                 candidates = [c for c in adata.obs.columns if any(k in c.lower() for k in ("perturbation", "gene", "symbol"))]
                 query_col = candidates[0] if candidates else adata.obs.columns[0]
 
+        if query_col not in adata.obs.columns:
+            return {
+                "status": "error",
+                "error_type": "KeyError",
+                "error": f"Target column '{query_col}' not found in adata.obs. Available: {list(adata.obs.columns)}",
+            }
+
         with contextlib.redirect_stdout(sys.stderr):
             if resolved_entity == "molecule":
                 adata = tl.annotate_molecules(adata, column=query_col, sources=sources or ["structural", "bioactivity"])
@@ -999,15 +1218,64 @@ def annotate_metadata(
             elif resolved_entity == "protein":
                 adata = tl.annotate_proteins(adata, column=query_col, sources=sources or ["function", "location"])
             else:
-                # Gene annotation
-                try:
-                    adata = tl.annotate_gene_perturbations(adata, column=query_col)
-                except Exception:
-                    # Lightweight fallback annotation
-                    adata.obs["gene_annotation_source"] = "GeneResolver"
-                    adata.uns["gene_annotations"] = {"status": "annotated", "entity": "gene"}
+                # Gene annotation: invoke without swallowing service exceptions
+                adata = tl.annotate_gene_perturbations(adata, column=query_col)
 
         new_cols = [str(c) for c in adata.obs.columns if c not in existing_cols]
+
+        unique_entities = list(adata.obs[query_col].unique())
+        total_entities = len(unique_entities)
+        successful_items = []
+        failed_items = []
+
+        # Audit annotations returned in adata.uns or newly populated observation features
+        uns_annotations = (
+            adata.uns.get("gene_annotations")
+            or adata.uns.get("protein_annotations")
+            or adata.uns.get("molecule_annotations")
+            or {}
+        )
+        if isinstance(uns_annotations, dict) and uns_annotations:
+            for ent in unique_entities:
+                ent_str = str(ent)
+                ann = uns_annotations.get(ent_str) or uns_annotations.get(ent)
+                if ann and isinstance(ann, dict) and any(bool(v) for v in ann.values()):
+                    successful_items.append(ent_str)
+                else:
+                    failed_items.append(ent_str)
+        elif new_cols:
+            for ent in unique_entities:
+                ent_mask = adata.obs[query_col] == ent
+                subset = adata.obs.loc[ent_mask, new_cols]
+                has_val = False
+                for c in new_cols:
+                    s = subset[c].dropna()
+                    if len(s) > 0 and (s != 0).any() and (s != "").any():
+                        has_val = True
+                        break
+                if has_val:
+                    successful_items.append(str(ent))
+                else:
+                    failed_items.append(str(ent))
+        else:
+            failed_items = [str(x) for x in unique_entities]
+
+        successful_count = len(successful_items)
+        failed_count = len(failed_items)
+
+        # Strict error: If 0 items were annotated, return error and do not write file
+        if successful_count == 0 or (not new_cols and not uns_annotations):
+            return {
+                "status": "error",
+                "error_type": "AnnotationError",
+                "error": f"Annotation service failed: no annotations retrieved for entities in column '{query_col}'.",
+                "successful_count": 0,
+                "failed_count": total_entities,
+                "total_entities": total_entities,
+                "failed_items": [str(x) for x in unique_entities[:10]],
+            }
+
+        is_partial = failed_count > 0
 
         if not output_path:
             base, ext = os.path.splitext(resolved_path)
@@ -1015,19 +1283,23 @@ def annotate_metadata(
         else:
             saved_path = os.path.abspath(output_path)
 
-        os.makedirs(os.path.dirname(saved_path) or ".", exist_ok=True)
-        adata.write_h5ad(saved_path)
+        _save_anndata_safely(adata, saved_path)
 
         return {
-            "status": "success",
+            "status": "partial_success" if is_partial else "success",
             "output_path": saved_path,
             "entity_type": resolved_entity,
             "annotation_type": annotation_type,
             "target_column": query_col,
             "new_columns_added": new_cols,
             "added_columns": new_cols,
-            "entities_annotated": len(new_cols) if new_cols else 1,
-            "summary": f"Annotated {resolved_entity} entities using column '{query_col}'. Added {len(new_cols)} new metadata features to .obs.",
+            "total_entities": total_entities,
+            "successful_count": successful_count,
+            "failed_count": failed_count,
+            "successful_items": successful_items[:10],
+            "failed_items": failed_items[:10],
+            "entities_annotated": successful_count,
+            "summary": f"Annotated {successful_count}/{total_entities} {resolved_entity} entities using column '{query_col}'. Added {len(new_cols)} new metadata features to .obs.",
         }
 
     except Exception as exc:
@@ -1036,6 +1308,8 @@ def annotate_metadata(
             "status": "error",
             "error_type": type(exc).__name__,
             "error": str(exc),
+            "successful_count": 0,
+            "failed_count": len(adata.obs) if "adata" in locals() and adata is not None else 0,
             "suggestion": "Check that the target dataset contains valid identifiers in .obs or .var.",
         }
 
@@ -1129,8 +1403,7 @@ def compute_umap(
         else:
             saved_path = os.path.abspath(output_path)
 
-        os.makedirs(os.path.dirname(saved_path) or ".", exist_ok=True)
-        adata.write_h5ad(saved_path)
+        _save_anndata_safely(adata, saved_path)
 
         return {
             "status": "success",
@@ -1300,12 +1573,13 @@ def benchmark_perturbations(
     control_pert: str,
     pert_col: str = "perturbation",
     split_col: str | None = None,
+    pred_label: str | None = None,
+    ref_label: str | None = None,
     path_pred: str | None = None,
     embedding_keys: list[str] | str | None = None,
     output_csv: str | None = None,
     output_dir: str | None = None,
     profile: Literal["full", "vcc", "minimal", "de", "anndata"] = "minimal",
-    **kwargs: Any,
 ) -> dict[str, Any]:
     """Evaluate perturbation predictions against real experimental observations using cell-eval.
 
@@ -1322,7 +1596,11 @@ def benchmark_perturbations(
     pert_col : str, default='perturbation'
         Column in adata.obs containing perturbation labels.
     split_col : str, optional
-        Column in adata.obs indicating data splits ('predicted' vs 'real').
+        Column in adata.obs indicating data splits. Requires pred_label and ref_label.
+    pred_label : str, optional
+        Category in adata.obs[split_col] designating model predictions.
+    ref_label : str, optional
+        Category in adata.obs[split_col] designating real reference observations.
     path_pred : str, optional
         Filesystem path to a predicted dataset when using paired files.
     embedding_keys : list[str] or str, optional
@@ -1381,16 +1659,38 @@ def benchmark_perturbations(
                     "error_type": "ValueError",
                     "error": f"split_col '{split_col}' must contain at least 2 categories.",
                 }
-            pred_mask = adata_full.obs[split_col].isin(["pred", "test", "predicted"])
-            if not pred_mask.any():
-                pred_mask = adata_full.obs[split_col] == unique_splits[0]
+
+            # Reject ambiguous split inputs: require explicit pred_label and ref_label
+            if not pred_label or not ref_label:
+                return {
+                    "status": "error",
+                    "error_type": "ValueError",
+                    "error": (
+                        f"Ambiguous benchmark inputs: when using 'split_col', you must explicitly specify "
+                        f"both 'pred_label' (e.g. 'test') and 'ref_label' (e.g. 'train'). "
+                        f"Available categories in adata.obs['{split_col}']: {unique_splits}."
+                    ),
+                }
+
+            if pred_label not in unique_splits or ref_label not in unique_splits:
+                return {
+                    "status": "error",
+                    "error_type": "ValueError",
+                    "error": (
+                        f"Specified pred_label '{pred_label}' or ref_label '{ref_label}' not found in "
+                        f"adata.obs['{split_col}']. Available values: {unique_splits}."
+                    ),
+                }
+
+            pred_mask = adata_full.obs[split_col] == pred_label
+            ref_mask = adata_full.obs[split_col] == ref_label
             adata_pred = adata_full[pred_mask].copy()
-            adata_real = adata_full[~pred_mask].copy()
+            adata_real = adata_full[ref_mask].copy()
         else:
             return {
                 "status": "error",
                 "error_type": "ValueError",
-                "error": "Either 'path_pred' (path to predicted AnnData) or 'split_col' must be specified.",
+                "error": "Either 'path_pred' (path to predicted AnnData) or 'split_col' with explicit 'pred_label' and 'ref_label' must be specified.",
             }
 
         if pert_col not in adata_real.obs or pert_col not in adata_pred.obs:

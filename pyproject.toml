@@ -562,6 +562,11 @@ xfail_strict = true
 addopts = [
   "--import-mode=importlib",
 ]
+filterwarnings = [
+  "ignore::DeprecationWarning",
+  "ignore::FutureWarning",
+  "ignore::UserWarning",
+]
 # Markers for tests that need heavy optional dependencies. The root conftest
 # auto-skips whole files (via collect_ignore_glob) when the dep is absent, so
 # the core suite runs on a lightweight `pip install embpy[test]` install.

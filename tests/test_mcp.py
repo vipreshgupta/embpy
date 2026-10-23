@@ -8,15 +8,25 @@ import numpy as np
 import pytest
 from anndata import AnnData
 
+from unittest import mock
+
 from embpy.mcp import (
+    annotate_metadata,
+    benchmark_perturbations,
+    benchmark_scib,
+    compute_embeddings,
     compute_umap,
     create_server,
     embed_cells,
     evaluate_perturbations,
     evaluate_scib,
     inspect_anndata,
+    inspect_data,
     list_available_models,
+    list_model_registry,
     map_gene_identifiers,
+    preprocess_counts,
+    resolve_identifiers,
 )
 
 
@@ -274,6 +284,8 @@ def test_evaluate_perturbations_success(sample_adata_path, tmp_path):
     res = evaluate_perturbations(
         path=sample_adata_path,
         split_col="split",
+        pred_label="test",
+        ref_label="train",
         control_pert="ctrl",
         pert_col="perturbation",
         profile="minimal",
@@ -305,3 +317,254 @@ def test_mcp_server_instance_and_tools():
         assert expected.issubset(tool_names)
 
     asyncio.run(_check())
+
+
+def test_mcp_client_all_tools_roundtrip(sample_adata_path, tmp_path):
+    """Test calling every supported MCP tool through the real MCP server interface."""
+    pytest.importorskip("mcp", reason="mcp not installed")
+    pytest.importorskip("cell_eval", reason="cell-eval not installed")
+    pytest.importorskip("scib", reason="scib not installed")
+
+    async def _test_tools():
+        server = create_server("test-client-server")
+
+        # 1. inspect_data
+        r_inspect = await server.call_tool("inspect_data", {"path": sample_adata_path})
+        assert not r_inspect.is_error
+        assert r_inspect.structured_content["status"] == "success"
+
+        # 2. list_model_registry
+        r_models = await server.call_tool("list_model_registry", {"entity_type": "molecule"})
+        assert not r_models.is_error
+        assert r_models.structured_content["status"] == "success"
+        assert "molformer_base" in r_models.structured_content["recommended_models"]["molecule"]
+
+        # 3. resolve_identifiers (verify kwargs: Field required bug is fixed)
+        r_resolve = await server.call_tool("resolve_identifiers", {"identifiers": ["TP53", "BRCA1"]})
+        assert not r_resolve.is_error
+        assert r_resolve.structured_content["status"] == "success"
+        assert r_resolve.structured_content["sample_mapping"].get("TP53") == "ENSG00000141510"
+
+        # 4. preprocess_counts
+        prep_out = str(tmp_path / "mcp_prepped.h5ad")
+        r_prep = await server.call_tool(
+            "preprocess_counts",
+            {"path": sample_adata_path, "min_genes": 5, "scale": True, "auto_adjust": False, "output_path": prep_out},
+        )
+        assert not r_prep.is_error
+        assert r_prep.structured_content["status"] == "success"
+        assert "scaled" in r_prep.structured_content["layers"]
+
+        # 5. compute_embeddings
+        emb_out = str(tmp_path / "mcp_embedded.h5ad")
+        r_emb = await server.call_tool(
+            "compute_embeddings",
+            {"path": sample_adata_path, "models": "pca", "preprocessing": "none", "output_path": emb_out},
+        )
+        assert not r_emb.is_error
+        assert r_emb.structured_content["status"] == "success"
+
+        # 6. compute_umap
+        umap_out = str(tmp_path / "mcp_umap.h5ad")
+        r_umap = await server.call_tool("compute_umap", {"path": sample_adata_path, "embedding_key": "X_prior", "output_path": umap_out})
+        assert not r_umap.is_error
+        assert r_umap.structured_content["status"] == "success"
+
+        # 7. benchmark_scib
+        r_scib = await server.call_tool(
+            "benchmark_scib",
+            {"path": sample_adata_path, "embedding_keys": "X_prior", "label_key": "cell_type"},
+        )
+        assert not r_scib.is_error
+        assert r_scib.structured_content["status"] == "success"
+
+        # 8. benchmark_perturbations
+        pert_csv = str(tmp_path / "mcp_pert.csv")
+        r_pert = await server.call_tool(
+            "benchmark_perturbations",
+            {
+                "path": sample_adata_path,
+                "split_col": "split",
+                "pred_label": "test",
+                "ref_label": "train",
+                "control_pert": "ctrl",
+                "pert_col": "perturbation",
+                "output_csv": pert_csv,
+            },
+        )
+        assert not r_pert.is_error
+        assert r_pert.structured_content["status"] == "success"
+
+    asyncio.run(_test_tools())
+
+
+def test_gene_conversions_human_mouse_versioned():
+    """Test human and mouse gene conversions including versioned IDs."""
+    # Human forward
+    res_human_fwd = resolve_identifiers(identifiers=["TP53"])
+    assert res_human_fwd["status"] in ("success", "partial_success")
+    assert res_human_fwd["sample_mapping"].get("TP53") == "ENSG00000141510"
+
+    # Human reverse with versioned ID
+    res_human_rev = resolve_identifiers(identifiers=["ENSG00000141510.1"])
+    assert res_human_rev["status"] in ("success", "partial_success")
+    assert res_human_rev["sample_mapping"].get("ENSG00000141510.1") == "TP53"
+
+    # Mouse explicit forward
+    res_mouse_fwd = resolve_identifiers(identifiers=["Trp53"], organism="mouse")
+    assert res_mouse_fwd["status"] in ("success", "partial_success")
+    assert res_mouse_fwd["sample_mapping"].get("Trp53") == "ENSMUSG00000059552"
+
+    # Mouse automatic reverse with versioned ID (auto-recognizes ENSMUSG)
+    res_mouse_rev = resolve_identifiers(identifiers=["ENSMUSG00000059552.2"])
+    assert res_mouse_rev["status"] in ("success", "partial_success")
+    assert res_mouse_rev["sample_mapping"].get("ENSMUSG00000059552.2") == "Trp53"
+
+
+def test_duplicate_blank_unknown_gene_resolution():
+    """Test pipeline gracefully handles duplicate names, blank inputs, and unknown genes."""
+    raw_inputs = ["TP53", "TP53", "", "   ", "UNKNOWN_NONEXISTENT_XYZ", "BRCA1"]
+    res = resolve_identifiers(identifiers=raw_inputs)
+    assert res["status"] in ("success", "partial_success")
+    mapping = res["sample_mapping"]
+    assert mapping.get("TP53") == "ENSG00000141510"
+    assert mapping.get("BRCA1") == "ENSG00000012048"
+    assert "UNKNOWN_NONEXISTENT_XYZ" in res["unmapped_sample"] or res["unmapped_count"] >= 1
+
+
+def test_row_aligned_mappings_preserved(tmp_path):
+    """Test saving gene mappings preserves exact row alignment, order, duplicates, and missing values."""
+    import pandas as pd
+
+    # AnnData with var_names distinct from symbol column
+    n_obs, n_vars = 10, 4
+    rng = np.random.RandomState(42)
+    X = rng.poisson(lam=2.0, size=(n_obs, n_vars)).astype(np.float32)
+
+    adata = AnnData(X=X)
+    adata.obs_names = [f"cell_{i}" for i in range(n_obs)]
+    adata.var_names = [f"feature_{i}" for i in range(n_vars)]
+    # Row 0: TP53, Row 1: TP53 (duplicate), Row 2: unknown/missing, Row 3: BRCA1
+    adata.var["symbol"] = ["TP53", "TP53", "UNKNOWN_GENE", "BRCA1"]
+    adata.obs["smiles"] = ["CC(=O)Oc1ccccc1C(=O)O"] * n_obs
+
+    in_path = str(tmp_path / "aligned_input.h5ad")
+    adata.write_h5ad(in_path)
+
+    out_path = str(tmp_path / "aligned_output.h5ad")
+    res = resolve_identifiers(
+        path=in_path,
+        var_column="symbol",
+        output_path=out_path,
+    )
+    assert res["status"] in ("success", "partial_success")
+
+    # Reopen and assert perfect row-alignment preservation
+    reopened = AnnData(X=X)
+    import anndata
+    reopened = anndata.read_h5ad(out_path)
+
+    assert list(reopened.var_names) == ["feature_0", "feature_1", "feature_2", "feature_3"]
+    mapped_col = reopened.var["symbol_mapped"]
+    assert mapped_col.iloc[0] == "ENSG00000141510"
+    assert mapped_col.iloc[1] == "ENSG00000141510"
+    assert pd.isna(mapped_col.iloc[2]) or mapped_col.iloc[2] is None
+    assert mapped_col.iloc[3] == "ENSG00000012048"
+
+    # Test obs_column resolution
+    obs_out = str(tmp_path / "aligned_obs_output.h5ad")
+    res_obs = resolve_identifiers(
+        path=in_path,
+        obs_column="smiles",
+        entity_type="molecule",
+        output_path=obs_out,
+    )
+    assert res_obs["status"] in ("success", "partial_success")
+    reopened_obs = anndata.read_h5ad(obs_out)
+    assert "smiles_mapped" in reopened_obs.obs
+    assert len(reopened_obs.obs["smiles_mapped"]) == n_obs
+
+
+def test_annotation_failure_reporting(sample_adata_path, tmp_path):
+    """Test simulating service failure returns an error report rather than a misleading success string."""
+    out_annotated = str(tmp_path / "should_not_exist_annotated.h5ad")
+
+    with mock.patch("embpy.tl.annotate_gene_perturbations", side_effect=RuntimeError("Connection to MyGene service failed")):
+        res = annotate_metadata(
+            path=sample_adata_path,
+            column="perturbation",
+            entity_type="gene",
+            output_path=out_annotated,
+        )
+        assert res["status"] == "error"
+        assert res["error_type"] == "RuntimeError"
+        assert res["successful_count"] == 0
+        assert "Connection to MyGene service failed" in res["error"]
+        assert not os.path.exists(out_annotated)
+
+
+def test_reverse_cache_official_symbol_casing():
+    """Test that resolving lowercase user input does not poison reverse cache with incorrect casing."""
+    # Resolve lowercase symbol
+    res_fwd = resolve_identifiers(identifiers=["tp53"])
+    assert res_fwd["status"] in ("success", "partial_success")
+    assert res_fwd["sample_mapping"].get("tp53") == "ENSG00000141510"
+
+    # Resolve Ensembl ID back to symbol -> must return canonical official symbol TP53
+    res_rev = resolve_identifiers(identifiers=["ENSG00000141510"], target_id_type="symbol")
+    assert res_rev["status"] in ("success", "partial_success")
+    assert res_rev["sample_mapping"].get("ENSG00000141510") == "TP53"
+
+
+def test_preprocessing_strictness_and_scale(sample_adata_path, tmp_path):
+    """Test that explicit preprocessing thresholds are honored and scale option is functional."""
+    # 1. Enforce strict min_genes=200 on 40-gene dataset (auto_adjust=False) -> filters out all cells
+    res_strict = preprocess_counts(
+        path=sample_adata_path,
+        min_genes=200,
+        auto_adjust=False,
+    )
+    assert res_strict["status"] == "success"
+    assert res_strict["n_cells"] == 0
+
+    # 2. Test scale=True executes sc.pp.scale and produces scaled layer
+    scaled_out = str(tmp_path / "scaled_output.h5ad")
+    res_scale = preprocess_counts(
+        path=sample_adata_path,
+        min_genes=5,
+        scale=True,
+        auto_adjust=False,
+        output_path=scaled_out,
+    )
+    assert res_scale["status"] == "success"
+    assert "scaled" in res_scale["layers"]
+
+    import anndata
+    adata_scaled = anndata.read_h5ad(scaled_out)
+    assert "scaled" in adata_scaled.layers
+
+
+def test_ambiguous_benchmark_inputs_rejected(sample_adata_path):
+    """Test benchmark_perturbations strictly rejects ambiguous inputs without pred_label and ref_label."""
+    res = benchmark_perturbations(
+        path=sample_adata_path,
+        split_col="split",
+        control_pert="ctrl",
+        pert_col="perturbation",
+    )
+    assert res["status"] == "error"
+    assert res["error_type"] == "ValueError"
+    assert "Ambiguous benchmark inputs" in res["error"]
+
+
+def test_dynamic_model_registry():
+    """Test list_model_registry dynamically populates registered models and avoids unregistered names."""
+    res = list_model_registry()
+    assert res["status"] == "success"
+    assert res["total_models_available"] >= 100
+
+    # molformer_base must exist; invalid molformer must not exist
+    mol_models = res["recommended_models"]["molecule"]
+    assert "molformer_base" in mol_models
+    assert "molformer" not in mol_models
+
