@@ -661,6 +661,7 @@ map_gene_identifiers = resolve_identifiers
 def preprocess_counts(
     path: str,
     output_path: str | None = None,
+    preprocessing: Literal["auto", "standard", "none"] = "standard",
     min_genes: int = 200,
     min_cells: int = 3,
     target_sum: float = 1e4,
@@ -685,10 +686,15 @@ def preprocess_counts(
         Path to the input raw .h5ad AnnData file.
     output_path : str, optional
         Filesystem destination to write the preprocessed .h5ad dataset.
+    preprocessing : {'auto', 'standard', 'none'}, default='standard'
+        Single-cell preprocessing strategy:
+        - 'auto': Automatically assesses dataset scale; dynamically adjusts QC thresholds (min_genes, min_cells) and HVG targets if dataset is small to prevent cell starvation.
+        - 'standard': Applies strict filtering cutoffs (min_genes, min_cells), normalize_total, log1p transformation, and selects n_top_genes HVGs.
+        - 'none': Bypasses filtering and transformations; preserves raw counts in .layers['counts'] without alterations.
     min_genes : int, default=200
-        Minimum genes expressed per cell. Strictly enforced unless auto_adjust=True.
+        Minimum genes expressed per cell. Strictly enforced unless auto_adjust=True or preprocessing='none'.
     min_cells : int, default=3
-        Minimum cells expressing a gene. Strictly enforced unless auto_adjust=True.
+        Minimum cells expressing a gene. Strictly enforced unless auto_adjust=True or preprocessing='none'.
     target_sum : float, default=1e4
         Target total counts per cell for normalization.
     n_top_genes : int, default=2000
@@ -729,6 +735,33 @@ def preprocess_counts(
         import scanpy as sc
 
         adata = anndata.read_h5ad(resolved_path)
+
+        if preprocessing == "auto":
+            auto_adjust = True
+        elif preprocessing == "none":
+            if not output_path:
+                base, ext = os.path.splitext(resolved_path)
+                saved_path = f"{base}_preprocessed{ext}"
+            else:
+                saved_path = os.path.abspath(output_path)
+
+            if "counts" not in adata.layers:
+                adata.layers["counts"] = adata.X.copy()
+            _save_anndata_safely(adata, saved_path)
+            return {
+                "status": "success",
+                "input_path": str(resolved_path),
+                "output_path": saved_path,
+                "n_cells": int(adata.n_obs),
+                "n_genes": int(adata.n_vars),
+                "n_hvg": 0,
+                "hvg_count": 0,
+                "layers": [str(k) for k in adata.layers.keys()],
+                "summary": (
+                    f"Preprocessing bypassed (mode='none'). Saved {adata.n_obs} cells and "
+                    f"{adata.n_vars} genes with raw counts preserved in .layers['counts']."
+                ),
+            }
 
         adjustments_applied: dict[str, Any] = {}
         if auto_adjust:
@@ -829,18 +862,73 @@ def preprocess_counts(
 
 
 # =========================================================================
+# =========================================================================
 # 2. Universal BioEmbedder Skills
 # =========================================================================
 
-def list_model_registry(entity_type: str | None = None) -> dict[str, Any]:
+MODEL_ALIASES: dict[str, str] = {
+    # Single-cell foundation models
+    "scgpt": "scgpt",
+    "geneformer": "geneformer_v2_12L",
+    "geneformer_v2": "geneformer_v2_12L",
+    "state": "state",
+    # Protein foundation models
+    "esm2_t6_8m": "esm2_8M",
+    "esm2_t12_35m": "esm2_35M",
+    "esm2_t30_150m": "esm2_150M",
+    "esm2_t33_650m_ur50d": "esm2_650M",
+    "esm2_t33_650m": "esm2_650M",
+    "esm2_650m_ur50d": "esm2_650M",
+    "esm1v": "esm1v_1",
+    "prott5": "prot_t5_xl",
+    "prot_t5": "prot_t5_xl",
+    # Small molecule foundation models & chemical fingerprints
+    "chemberta": "chemberta2MTR",
+    "rdkit_2d": "rdkit_fp",
+    "rdkit_morgan": "morgan_fp",
+    # DNA / Genomic foundation models
+    "enformer": "enformer_human_rough",
+    "borzoi": "borzoi_v0",
+    "nt": "nt_500m_human_ref",
+    "evo": "evo1_8k",
+    # Cellular morphology models
+    "subcell": "subcell_mae_rybg",
+    "structure": "boltz2",
+    # Text foundation models
+    "minilm": "minilm_l6_v2",
+    "bge_large": "bert_base_uncased",
+    "llama": "llama3.2_1b",
+}
+
+
+def list_model_registry(
+    entity_type: Literal[
+        "gene",
+        "protein",
+        "molecule",
+        "dna",
+        "single_cell",
+        "morphology",
+        "text",
+        "perturbation",
+    ] | None = None,
+) -> dict[str, Any]:
     """Report available models (~150), supported biological modalities, and hardware accelerators.
 
-    Enables autonomous model selection across single cells, genes, proteins, and molecules.
+    Enables autonomous model selection across the 8 core biological modalities:
+    - 'gene': Gene sequence representations and genomic models (e.g. HyenaDNA, DNABERT-2, Enformer)
+    - 'protein': Protein language and structure models (e.g. ESM-2, ESM-1v, ProtT5)
+    - 'molecule': Small molecule representations and chemical fingerprints (e.g. ChemBERTa, MoLFormer, RDKit)
+    - 'dna': Regulatory genomics and sequence foundation models (e.g. Enformer, Borzoi, Nucleotide Transformer, Evo)
+    - 'single_cell': Single-cell transcriptomic foundation models (e.g. PCA, scVI, scGPT, Geneformer, STATE)
+    - 'morphology': High-content imaging and cellular structure representations (e.g. SubCell, Boltz-2)
+    - 'text': Biomedical text and literature embedding models (e.g. MiniLM, BGE, LLaMA)
+    - 'perturbation': Perturbation response and cellular state models (e.g. STATE, SubCell, ChemBERTa)
 
     Parameters
     ----------
-    entity_type : str, optional
-        Filter model roster by modality: 'cell', 'gene', 'protein', 'molecule', 'morphology', 'text'.
+    entity_type : {'gene', 'protein', 'molecule', 'dna', 'single_cell', 'morphology', 'text', 'perturbation'}, optional
+        Filter model roster by biological modality.
 
     Returns
     -------
@@ -848,9 +936,11 @@ def list_model_registry(entity_type: str | None = None) -> dict[str, Any]:
         Model registry overview:
         - status: "success"
         - total_models_available: Approximate total models in registry (~150)
-        - supported_entities: List of valid biological modalities
+        - supported_entities: List of 8 valid biological modalities (gene, protein, molecule, dna, single_cell, morphology, text, perturbation)
         - compute_device: Active compute hardware (cuda / mps / cpu)
         - recommended_models: Curated model keys per modality
+        - models_by_modality: Grouped foundation models across all 8 modalities
+        - available_models: All underlying registered model identifiers per modality dynamically queried from internal registry
         - runnable_singlecell_models: Single-cell foundation models runnable in local environment
         - optional_extras_status: Installation status of optional dependency bundles
     """
@@ -887,14 +977,42 @@ def list_model_registry(entity_type: str | None = None) -> dict[str, Any]:
         morph_models = sorted([k for k, v in MODEL_REGISTRY.items() if hasattr(v[0], "model_type") and v[0].model_type == "morphology"])
         text_models = sorted([k for k, v in MODEL_REGISTRY.items() if hasattr(v[0], "model_type") and v[0].model_type == "text"])
 
-        # Curated recommendations built dynamically from verified registered names (e.g. molformer_base)
-        curated_catalog = {
-            "cell": [m for m in ["pca", "scvi", "scanvi", "totalvi", "scgpt", "geneformer_v2_12L", "state", "stack"] if m in sc_models],
-            "gene": [m for m in ["hyenadna_tiny_1k", "dnabert2", "ntv2_500m", "enformer_human_rough", "borzoi_v0"] if m in dna_models] or dna_models[:5],
-            "protein": [m for m in ["esm2_8M", "esm2_35M", "esm2_150M", "esm2_650M", "protbert", "esm1b"] if m in prot_models] or prot_models[:5],
-            "molecule": [m for m in ["chemberta2MTR", "molformer_base", "morgan_fp", "rdkit_fp", "maccs_fp"] if m in mol_models] or mol_models[:5],
-            "morphology": [m for m in ["subcell_mae_rybg", "subcell_vit_rybg", "densenet_hpa"] if m in morph_models] or morph_models[:5],
-            "text": [m for m in ["minilm_l6_v2", "bert_base_uncased", "llama3.2_1b"] if m in text_models] or text_models[:5],
+        # Gene models from sequence registry (hyenadna, dnabert, nt, enformer, borzoi, caduceus, etc.)
+        gene_models = sorted(list(set(dna_models)))
+
+        # Perturbation models from singlecell, morphology, and molecular perturbation screens
+        pert_models = sorted(list(set(
+            [m for m in sc_models if m in ("state", "scgpt", "geneformer_v2_12L", "geneformer_v1_12L", "pca", "stack")] +
+            [m for m in morph_models if "subcell" in m] +
+            [m for m in mol_models if "chemberta" in m or "molformer" in m]
+        )))
+
+        # Available models dynamically queried from internal registry across all 8 exact modalities
+        available_models: dict[str, list[str]] = {
+            "gene": gene_models,
+            "protein": prot_models,
+            "molecule": mol_models,
+            "dna": dna_models,
+            "single_cell": sc_models,
+            "morphology": morph_models,
+            "text": text_models,
+            "perturbation": pert_models,
+            # Backward-compatibility alias
+            "cell": sc_models,
+        }
+
+        # Curated recommendations grouped by the 8 canonical modalities
+        curated_catalog: dict[str, list[str]] = {
+            "gene": ["enformer", "borzoi", "nt", "evo"],
+            "protein": ["esm2_t6_8M", "esm2_t12_35M", "esm2_t30_150M", "esm2_t33_650M_UR50D", "esm1v", "prott5"],
+            "molecule": ["chemberta", "molformer_base", "rdkit_2d", "rdkit_morgan"],
+            "dna": ["enformer", "borzoi", "nt", "evo"],
+            "single_cell": ["pca", "scvi", "scgpt", "geneformer_v2_12L", "state"],
+            "morphology": ["subcell", "structure"],
+            "text": ["minilm", "bge_large", "llama"],
+            "perturbation": ["state", "subcell", "chemberta", "scgpt", "geneformer_v2_12L"],
+            # Backward-compatibility alias
+            "cell": ["pca", "scvi", "scgpt", "geneformer_v2_12L", "state"],
         }
 
         total_models = len(set(sc_models + list(MODEL_REGISTRY.keys())))
@@ -907,31 +1025,49 @@ def list_model_registry(entity_type: str | None = None) -> dict[str, Any]:
         if importlib.util.find_spec("state") is not None:
             runnable_sc.append("state")
 
-        filtered_catalog = {k: v for k, v in curated_catalog.items() if entity_type is None or k == entity_type.lower()}
+        supported_8 = [
+            "gene",
+            "protein",
+            "molecule",
+            "dna",
+            "single_cell",
+            "morphology",
+            "text",
+            "perturbation",
+        ]
 
-        return {
+        if entity_type is not None:
+            raw_ent = str(entity_type).lower().strip()
+            norm_entity = "single_cell" if raw_ent in ("cell", "singlecell") else raw_ent
+            filtered_catalog = {norm_entity: curated_catalog.get(norm_entity, [])}
+            selected_models = available_models.get(norm_entity, [])
+        else:
+            norm_entity = None
+            filtered_catalog = {k: curated_catalog[k] for k in supported_8}
+            selected_models = None
+
+        res_payload: dict[str, Any] = {
             "status": "success",
             "total_models_available": total_models,
             "total_models": total_models,
-            "supported_entities": list(curated_catalog.keys()),
+            "supported_entities": supported_8,
             "compute_device": device_str,
             "device": device_str,
             "hardware_device": device_str,
             "device_details": device_name,
             "recommended_models": filtered_catalog,
-            "available_models": {
-                "cell": sc_models,
-                "gene": dna_models,
-                "protein": prot_models,
-                "molecule": mol_models,
-                "morphology": morph_models,
-                "text": text_models,
-            },
+            "models_by_modality": {k: curated_catalog[k] for k in supported_8},
+            "available_models": available_models,
             "runnable_models": runnable_sc,
             "runnable_singlecell_models": runnable_sc,
             "all_singlecell_models": sc_models,
             "optional_extras_status": extras,
         }
+        if norm_entity is not None:
+            res_payload["entity_type"] = norm_entity
+            res_payload["models"] = selected_models
+
+        return res_payload
 
     except Exception as exc:
         logger.error("list_model_registry failed: %s", exc, exc_info=True)
@@ -949,7 +1085,16 @@ list_available_models = list_model_registry
 def compute_embeddings(
     path: str,
     models: list[str] | str = "pca",
-    entity_type: Literal["cell", "gene", "protein", "molecule"] = "cell",
+    entity_type: Literal[
+        "gene",
+        "protein",
+        "molecule",
+        "dna",
+        "single_cell",
+        "morphology",
+        "text",
+        "perturbation",
+    ] = "single_cell",
     batch_size: int = 32,
     output_key: str | None = None,
     output_path: str | None = None,
@@ -958,8 +1103,18 @@ def compute_embeddings(
 ) -> dict[str, Any]:
     """Execute Universal BioEmbedder to compute embeddings and save representations to disk.
 
-    Supports single cells, gene sequences, protein sequences, and small molecules.
-    Embeddings are saved to disk in the standardized scverse slots (.obsm, .varm, or .uns).
+    Supports 8 biological modalities:
+    - 'gene': Gene sequence representations and genomic models (e.g. HyenaDNA, DNABERT-2, Enformer)
+    - 'protein': Protein language and structure models (e.g. ESM-2, ESM-1v, ProtT5)
+    - 'molecule': Small molecule representations and chemical fingerprints (e.g. ChemBERTa, MoLFormer, RDKit)
+    - 'dna': Regulatory genomics and sequence foundation models (e.g. Enformer, Borzoi, Nucleotide Transformer, Evo)
+    - 'single_cell': Single-cell transcriptomic foundation models (e.g. PCA, scVI, scGPT, Geneformer, STATE)
+    - 'morphology': Cellular imaging and subcellular localization models (e.g. SubCell, Boltz-2)
+    - 'text': Biomedical text and literature embedding models (e.g. MiniLM, BGE, LLaMA)
+    - 'perturbation': Perturbation response and cellular state models (e.g. STATE, SubCell, ChemBERTa)
+
+    Models are dynamically fetched based on the selected modality. Embeddings are saved to disk
+    in standardized scverse slots (.obsm, .varm, or .uns).
 
     Token-Saving: Returns coordinate array dimensions and output file locations rather than
     raw numeric matrices.
@@ -969,9 +1124,19 @@ def compute_embeddings(
     path : str
         Filesystem path to the input AnnData (.h5ad) dataset.
     models : list[str] or str, default="pca"
-        Target model key(s) to compute (e.g. ['pca'], ['pca', 'scvi']).
-    entity_type : {'cell', 'gene', 'protein', 'molecule'}, default='cell'
-        Biological entity modality.
+        Model roster to compute. Models are dynamically fetched based on the selected modality.
+        Call 'list_model_registry' to view available foundation models dynamically.
+        Examples per modality:
+          - single_cell: ["pca", "scvi", "scgpt", "geneformer_v2_12L", "state"]
+          - gene: ["hyenadna_tiny_1k", "dnabert2", "ntv2_500m", "enformer_human_rough"]
+          - protein: ["esm2_t33_650M_UR50D", "esm1v", "prott5"]
+          - molecule: ["chemberta", "molformer_base", "rdkit_2d"]
+          - dna: ["enformer", "borzoi", "nt", "evo"]
+          - morphology: ["subcell", "structure"]
+          - text: ["minilm", "bge_large"]
+          - perturbation: ["state", "subcell", "chemberta"]
+    entity_type : {'gene', 'protein', 'molecule', 'dna', 'single_cell', 'morphology', 'text', 'perturbation'}, default='single_cell'
+        Biological entity modality. Governs foundation model validity and representation slot alignment.
     batch_size : int, default=32
         Inference batch size.
     output_key : str, optional
@@ -979,7 +1144,7 @@ def compute_embeddings(
     output_path : str, optional
         Filesystem path to save the updated dataset containing the new embeddings.
     preprocessing : {'auto', 'standard', 'raw', 'none'}, default='auto'
-        Single-cell preprocessing strategy.
+        Single-cell preprocessing strategy ('auto', 'standard', 'raw', 'none').
     device : str, default='auto'
         Compute device target ('auto', 'cpu', 'cuda', 'mps').
 
@@ -1015,15 +1180,22 @@ def compute_embeddings(
                 "path": str(path),
             }
 
+        # Resolve model aliases (e.g. esm2_t33_650M_UR50D -> esm2_650M, chemberta -> chemberta2MTR)
+        resolved_models = [MODEL_ALIASES.get(str(m).strip().lower(), str(m).strip()) for m in model_list]
+
         import anndata
         from embpy import BioEmbedder
 
         adata = anndata.read_h5ad(resolved_path)
 
+        ent_str = str(entity_type).lower().strip()
+        if ent_str in ("cell", "singlecell"):
+            ent_str = "single_cell"
+
         with contextlib.redirect_stdout(sys.stderr):
             embedder = BioEmbedder(device=device)
 
-            if entity_type.lower() == "cell":
+            if ent_str in ("single_cell", "cell"):
                 extra_kwargs: dict[str, Any] = {}
                 if adata.n_vars < 2000 and preprocessing == "auto":
                     extra_kwargs["n_top_genes"] = max(10, adata.n_vars - 1)
@@ -1031,18 +1203,23 @@ def compute_embeddings(
 
                 adata_out = embedder.embed_cells(
                     adata,
-                    models=model_list,
+                    models=resolved_models,
                     batch_size=batch_size,
                     preprocessing=preprocessing,
                     obsm_prefix="X_",
                     **extra_kwargs,
                 )
             else:
-                # Modality embedding for genes, proteins, molecules
+                # Modality embedding for proteins, molecules, dna/gene, morphology, perturbation, text
+                backend_entity = (
+                    "gene" if ent_str in ("dna", "gene")
+                    else "perturbation" if ent_str in ("morphology", "perturbation")
+                    else ent_str
+                )
                 adata_out = embedder.embed(
                     adata,
-                    entity_type=entity_type.lower(),
-                    model=model_list[0] if len(model_list) == 1 else model_list,
+                    entity_type=backend_entity,
+                    model=resolved_models[0] if len(resolved_models) == 1 else resolved_models,
                 )
 
         if output_key and len(model_list) == 1:
@@ -1113,16 +1290,17 @@ embed_cells = compute_embeddings
 def annotate_metadata(
     path: str,
     entity_type: Literal["auto", "gene", "protein", "molecule", "cell_line"] = "auto",
-    annotation_type: str = "pathway",
+    annotation_types: list[Literal["go", "pathways", "domains", "diseases", "interactions", "cell_line"]] | Literal["go", "pathways", "domains", "diseases", "interactions", "cell_line"] = "pathways",
+    annotation_type: Literal["go", "pathways", "domains", "diseases", "interactions", "cell_line"] | None = None,
     column: str | None = None,
     obs_column: str | None = None,
     sources: list[str] | str | None = None,
     output_path: str | None = None,
     organism: str = "human",
 ) -> dict[str, Any]:
-    """Enrich an AnnData dataset with external biological metadata (GO terms, pathways, diseases).
+    """Enrich an AnnData dataset with external biological metadata (GO terms, pathways, diseases, domains).
 
-    Queries reference knowledge bases (e.g. MyGene.info, UniProt, ChEMBL, DepMap) and appends
+    Queries reference knowledge bases (e.g. MyGene.info, UniProt, ChEMBL, DepMap, STRING) and appends
     scalar annotation columns to .obs and detailed annotations to .uns.
 
     Token-Saving: Writes the enriched dataset to disk and returns a concise list of added columns.
@@ -1133,8 +1311,16 @@ def annotate_metadata(
         Filesystem path to the target .h5ad dataset.
     entity_type : {'auto', 'gene', 'protein', 'molecule', 'cell_line'}, default='auto'
         Entity type represented in the dataset.
-    annotation_type : str, default='pathway'
-        Type of biological annotation.
+    annotation_types : list[{'go', 'pathways', 'domains', 'diseases', 'interactions', 'cell_line'}] or str, default='pathways'
+        Explicit biological annotation types to retrieve:
+        - 'go': Gene Ontology terms (biological process, molecular function, cellular component).
+        - 'pathways': Biological pathways (KEGG, Reactome, WikiPathways).
+        - 'domains': Protein functional domains and families (Pfam, InterPro).
+        - 'diseases': Disease associations and clinical indications (DisGeNET, Open Targets).
+        - 'interactions': Molecular and protein-protein interactions (STRING, IntAct).
+        - 'cell_line': Cell line annotations, lineages, and dependencies (DepMap, Cellosaurus).
+    annotation_type : {'go', 'pathways', 'domains', 'diseases', 'interactions', 'cell_line'}, optional
+        Singular alias for annotation_types.
     column : str, optional
         Column in adata.obs holding entity identifiers (or None to check obs_names/var_names).
     obs_column : str, optional
@@ -1166,6 +1352,15 @@ def annotate_metadata(
                 "error_type": "FileNotFoundError",
                 "error": f"Dataset file not found: {path}",
             }
+
+        # Resolve annotation_types alias if supplied
+        effective_ann = annotation_type if annotation_type is not None else annotation_types
+        if isinstance(effective_ann, (list, tuple)):
+            selected_ann = str(effective_ann[0]) if effective_ann else "pathways"
+        else:
+            selected_ann = str(effective_ann)
+
+        annotation_type = selected_ann
 
         import anndata
         import embpy.tl as tl
