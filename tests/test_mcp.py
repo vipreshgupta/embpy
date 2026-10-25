@@ -424,7 +424,13 @@ def test_gene_conversions_human_mouse_versioned():
 def test_duplicate_blank_unknown_gene_resolution():
     """Test pipeline gracefully handles duplicate names, blank inputs, and unknown genes."""
     raw_inputs = ["TP53", "TP53", "", "   ", "UNKNOWN_NONEXISTENT_XYZ", "BRCA1"]
-    res = resolve_identifiers(identifiers=raw_inputs)
+    with mock.patch("embpy.resources.gene.resolver._ensembl_post") as mock_post:
+        mock_resp = mock.MagicMock()
+        mock_resp.ok = True
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {}
+        mock_post.return_value = mock_resp
+        res = resolve_identifiers(identifiers=raw_inputs)
     assert res["status"] in ("success", "partial_success")
     mapping = res["sample_mapping"]
     assert mapping.get("TP53") == "ENSG00000141510"
@@ -452,11 +458,17 @@ def test_row_aligned_mappings_preserved(tmp_path):
     adata.write_h5ad(in_path)
 
     out_path = str(tmp_path / "aligned_output.h5ad")
-    res = resolve_identifiers(
-        path=in_path,
-        var_column="symbol",
-        output_path=out_path,
-    )
+    with mock.patch("embpy.resources.gene.resolver._ensembl_post") as mock_post:
+        mock_resp = mock.MagicMock()
+        mock_resp.ok = True
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {}
+        mock_post.return_value = mock_resp
+        res = resolve_identifiers(
+            path=in_path,
+            var_column="symbol",
+            output_path=out_path,
+        )
     assert res["status"] in ("success", "partial_success")
 
     # Reopen and assert perfect row-alignment preservation

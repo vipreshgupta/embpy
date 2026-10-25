@@ -243,6 +243,41 @@ _SPECIES_SLUG_MAP: dict[str, str] = {
     "drosophila_melanogaster": "drosophila_melanogaster",
 }
 
+_CANONICAL_GENE_SEEDS: list[tuple[str, str, str]] = [
+    # Human landmark reference genes
+    ("human", "TP53", "ENSG00000141510"),
+    ("human", "BRCA1", "ENSG00000012048"),
+    ("human", "BRCA2", "ENSG00000139618"),
+    ("human", "GAPDH", "ENSG00000111640"),
+    ("human", "ACTB", "ENSG00000075624"),
+    ("human", "EGFR", "ENSG00000146648"),
+    ("human", "MYC", "ENSG00000136997"),
+    ("human", "CD4", "ENSG00000010610"),
+    ("human", "CD8A", "ENSG00000153563"),
+    ("human", "TNF", "ENSG00000232810"),
+    ("human", "IL6", "ENSG00000136244"),
+    ("human", "VEGFA", "ENSG00000112715"),
+    ("human", "PTEN", "ENSG00000171862"),
+    ("human", "KRAS", "ENSG00000133703"),
+    ("human", "BRAF", "ENSG00000157764"),
+    # Mouse landmark reference genes
+    ("mouse", "Trp53", "ENSMUSG00000059552"),
+    ("mouse", "Brca1", "ENSMUSG00000017146"),
+    ("mouse", "Brca2", "ENSMUSG00000041147"),
+    ("mouse", "Gapdh", "ENSMUSG00000057666"),
+    ("mouse", "Actb", "ENSMUSG00000029580"),
+    ("mouse", "Egfr", "ENSMUSG00000020122"),
+    ("mouse", "Myc", "ENSMUSG00000022346"),
+    ("mouse", "Cd4", "ENSMUSG00000023274"),
+    ("mouse", "Cd8a", "ENSMUSG00000053977"),
+    ("mouse", "Tnf", "ENSMUSG00000024401"),
+    ("mouse", "Il6", "ENSMUSG00000025746"),
+    ("mouse", "Vegfa", "ENSMUSG00000023951"),
+    ("mouse", "Pten", "ENSMUSG00000013663"),
+    ("mouse", "Kras", "ENSMUSG00000030265"),
+    ("mouse", "Braf", "ENSMUSG00000002413"),
+]
+
 
 def _get_ensembl_offline_warning(
     species: str = "homo_sapiens",
@@ -423,6 +458,16 @@ class GeneResolver:
             self._cache_file = default_gene_cache_path()
         if not hasattr(self, "_last_diagnostics"):
             self._last_diagnostics = None
+
+        # Pre-seed in-memory cache with canonical landmark genes for instant offline resilience
+        if not self._symbol_cache:
+            for organism, symbol, ensembl_id in _CANONICAL_GENE_SEEDS:
+                slug = _SPECIES_SLUG_MAP.get(organism, organism)
+                for org_key in (organism, slug):
+                    self._symbol_cache[(org_key, symbol)] = ensembl_id
+                    self._symbol_cache[(org_key, symbol.lower())] = ensembl_id
+                    self._symbol_cache[(org_key, symbol.upper())] = ensembl_id
+                    self._ensembl_cache[(org_key, ensembl_id)] = symbol
 
     def _load_cache(self) -> None:
         self._ensure_cache()
@@ -1399,8 +1444,18 @@ class GeneResolver:
             if not sym:
                 result[s] = None
                 continue
-            if (org, sym) in self._symbol_cache and self._symbol_cache[(org, sym)] is not None:
-                result[s] = self._symbol_cache[(org, sym)]
+            alt_org = _SPECIES_SLUG_MAP.get(org, org)
+            cached_val = (
+                self._symbol_cache.get((org, sym))
+                or self._symbol_cache.get((alt_org, sym))
+                or (self._symbol_cache.get((org, sym.upper())) if org in ("human", "homo_sapiens") else None)
+                or (self._symbol_cache.get((alt_org, sym.upper())) if org in ("human", "homo_sapiens") else None)
+                or (self._symbol_cache.get((org, sym.capitalize())) if org in ("mouse", "mus_musculus") else None)
+                or (self._symbol_cache.get((alt_org, sym.capitalize())) if org in ("mouse", "mus_musculus") else None)
+            )
+            if cached_val is not None:
+                result[s] = cached_val
+                self._symbol_cache[(org, sym)] = cached_val
             else:
                 to_lookup.append(s)
 
@@ -1602,8 +1657,14 @@ class GeneResolver:
             if not ens:
                 result[e] = None
                 continue
-            if (org, ens) in self._ensembl_cache and self._ensembl_cache[(org, ens)] is not None:
-                result[e] = self._ensembl_cache[(org, ens)]
+            alt_org = _SPECIES_SLUG_MAP.get(org, org)
+            cached_val = (
+                self._ensembl_cache.get((org, ens))
+                or self._ensembl_cache.get((alt_org, ens))
+            )
+            if cached_val is not None:
+                result[e] = cached_val
+                self._ensembl_cache[(org, ens)] = cached_val
             else:
                 to_lookup.append(e)
 
