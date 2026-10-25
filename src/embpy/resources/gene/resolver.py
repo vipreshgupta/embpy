@@ -251,7 +251,6 @@ _CANONICAL_GENE_SEEDS: list[tuple[str, str, str]] = [
     ("human", "GAPDH", "ENSG00000111640"),
     ("human", "ACTB", "ENSG00000075624"),
     ("human", "EGFR", "ENSG00000146648"),
-    ("human", "MYC", "ENSG00000136997"),
     ("human", "CD4", "ENSG00000010610"),
     ("human", "CD8A", "ENSG00000153563"),
     ("human", "TNF", "ENSG00000232810"),
@@ -267,7 +266,6 @@ _CANONICAL_GENE_SEEDS: list[tuple[str, str, str]] = [
     ("mouse", "Gapdh", "ENSMUSG00000057666"),
     ("mouse", "Actb", "ENSMUSG00000029580"),
     ("mouse", "Egfr", "ENSMUSG00000020122"),
-    ("mouse", "Myc", "ENSMUSG00000022346"),
     ("mouse", "Cd4", "ENSMUSG00000023274"),
     ("mouse", "Cd8a", "ENSMUSG00000053977"),
     ("mouse", "Tnf", "ENSMUSG00000024401"),
@@ -459,6 +457,8 @@ class GeneResolver:
         if not hasattr(self, "_last_diagnostics"):
             self._last_diagnostics = None
 
+    def _load_cache(self) -> None:
+        self._ensure_cache()
         # Pre-seed in-memory cache with canonical landmark genes for instant offline resilience
         if not self._symbol_cache:
             for organism, symbol, ensembl_id in _CANONICAL_GENE_SEEDS:
@@ -468,9 +468,6 @@ class GeneResolver:
                     self._symbol_cache[(org_key, symbol.lower())] = ensembl_id
                     self._symbol_cache[(org_key, symbol.upper())] = ensembl_id
                     self._ensembl_cache[(org_key, ensembl_id)] = symbol
-
-    def _load_cache(self) -> None:
-        self._ensure_cache()
         if self._cache_file and self._cache_file.exists():
             try:
                 import json
